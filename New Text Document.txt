@@ -1,0 +1,24 @@
+Implemented the end-to-end MVP outlined in the requirement doc, covering authentication, room flow, and playable Gobang/Chinese chess.
+
+Backend
+
+Bootstrapped an embedded HTTP server that wires API + static asset hosting and supports env overrides for port/paths (backend/src/com/ocgp/server/Main.java (line 12)).
+Added a full REST layer (register/login/me/games/rooms/moves) with JSON parsing, CORS, and room lifecycle handling (backend/src/com/ocgp/server/ApiHandler.java (line 25)).
+Captured domain state (users, sessions, rooms) plus DTO helpers (backend/src/com/ocgp/server/DataStore.java (line 12), backend/src/com/ocgp/server/Room.java (line 17)).
+Implemented full rule engines for Gobang (backend/src/com/ocgp/server/GobangGameSession.java (line 8)) and Chinese chess, including palace, river, cannon screens, horse-leg checks, and “facing generals” validation (backend/src/com/ocgp/server/ChineseChessGameSession.java (line 8)).
+Added lightweight JSON/HTTP utilities used across handlers (backend/src/com/ocgp/server/JsonUtil.java (line 1), backend/src/com/ocgp/server/HttpUtils.java (line 1)).
+Frontend
+
+Built SPA lobby + room views with login/register, room creation, join/start controls, and polling (frontend/app.js (line 1), frontend/index.html (line 1)).
+Rendered interactive boards for both games (click-to-place Gobang at frontend/app.js (line 391), piece selection + movement for Chinese chess at frontend/app.js (line 431)) and styled the UI (frontend/styles.css (line 1)).
+Tooling & Docs
+
+Added a PowerShell helper to compile and run the backend with static asset wiring (backend/run.ps1 (line 1)).
+Documented project layout, features, and run instructions (README.md (line 1)).
+Verification
+
+javac --add-modules jdk.httpserver -d backend/out (Get-ChildItem -Recurse -Filter *.java).FullName (passes).
+Next Steps
+
+Start the server via cd backend; .\run.ps1 -Port 8080.
+Open http://localhost:8080, create two accounts in separate browsers, join the same room, and play through both games.
