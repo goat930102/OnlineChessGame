@@ -67,16 +67,25 @@ public class ChineseChessGameSession implements GameSession {
         }
 
         Piece captured = target;
+        
         performMove(piece, fromRow, fromCol, toRow, toCol);
 
         if (generalsFacing()) {
-            // revert
             performMove(piece, toRow, toCol, fromRow, fromCol);
             if (captured != null) {
                 placePiece(captured, toRow, toCol);
             }
             throw new HttpStatusException(400, "Generals cannot face each other");
         }
+
+        if (isPlayerInCheck(piece.color)) {
+            performMove(piece, toRow, toCol, fromRow, fromCol);
+            if (captured != null) {
+                placePiece(captured, toRow, toCol);
+            }
+            throw new HttpStatusException(400, "Cannot make a move that leaves king in check");
+        }
+
 
         Map<String, Object> move = new HashMap<>();
         move.put("playerId", playerId);
@@ -87,6 +96,11 @@ public class ChineseChessGameSession implements GameSession {
         move.put("piece", piece.type.name());
         move.put("color", piece.color.name());
         move.put("moveNumber", moves.size() + 1);
+
+        PieceColor opponentColor = (piece.color == PieceColor.RED) ? PieceColor.BLACK : PieceColor.RED;
+        boolean isCheck = isPlayerInCheck(opponentColor);
+        move.put("isCheck", isCheck);
+
         if (captured != null) {
             move.put("captured", captured.type.name());
             move.put("capturedColor", captured.color.name());
@@ -214,6 +228,43 @@ public class ChineseChessGameSession implements GameSession {
         board[toRow][toCol] = piece;
         piece.row = toRow;
         piece.col = toCol;
+    }
+
+    private int[] findGeneral(PieceColor color) {
+        for (int r = 0; r < ROWS; r++) {
+            for (int c = 0; c < COLS; c++) {
+                Piece p = board[r][c];
+                if (p != null && p.type == PieceType.GENERAL && p.color == color) {
+                    return new int[]{r, c};
+                }
+            }
+        }
+        throw new IllegalStateException("General not found for color " + color);
+    }
+
+    private boolean isPlayerInCheck(PieceColor color) {
+        int[] generalPos;
+        try {
+            generalPos = findGeneral(color);
+        } catch (IllegalStateException e) {
+            return false;
+        }
+        int genRow = generalPos[0];
+        int genCol = generalPos[1];
+
+        PieceColor opponentColor = (color == PieceColor.RED) ? PieceColor.BLACK : PieceColor.RED;
+        
+        for (int r = 0; r < ROWS; r++) {
+            for (int c = 0; c < COLS; c++) {
+                Piece p = board[r][c];
+                if (p != null && p.color == opponentColor) {
+                    if (isLegalMove(p, r, c, genRow, genCol, true)) {
+                        return true; 
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     private boolean generalsFacing() {

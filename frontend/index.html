@@ -91,6 +91,21 @@
             </div>
         </section>
     </main>
+
+    <div id="simple-modal" class="modal-overlay hidden">
+        <div class="simple-card">
+            <h2 class="modal-title">遊戲結束</h2>
+            
+            <div class="modal-body">
+                <p id="winner-text" class="winner-text"></p>
+            </div>
+    
+            <div class="modal-actions">
+                <button onclick="closeModal()" class="btn-secondary">關閉</button>
+                <button onclick="returnToLobby()" class="btn-primary">返回大廳</button>
+            </div>
+        </div>
+    </div>
     <div id="toast" class="hidden"></div>
     <script src="app.js"></script>
 </body>

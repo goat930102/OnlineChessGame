@@ -5,7 +5,8 @@ const state = {
     rooms: [],
     activeRoom: null,
     poller: null,
-    selectedCell: null
+    selectedCell: null,
+    lastRoomStatus: null 
 };
 
 const dom = {
@@ -29,7 +30,9 @@ const dom = {
     boardContainer: document.getElementById("board-container"),
     moveHistory: document.getElementById("move-history"),
     logoutBtn: document.getElementById("logout-btn"),
-    toast: document.getElementById("toast")
+    toast: document.getElementById("toast"),
+    simpleModal: document.getElementById("simple-modal"),
+    winnerText: document.getElementById("winner-text")
 };
 
 function init() {
@@ -259,11 +262,16 @@ async function joinRoom(roomId) {
 async function enterRoom(roomId) {
     try {
         clearRoomPoller();
+        state.lastRoomStatus = null; 
+        
         const response = await apiRequest(`/api/rooms/${roomId}`);
         state.activeRoom = response.room;
+        
         dom.lobbySection.classList.add("hidden");
         dom.roomSection.classList.remove("hidden");
+        
         renderActiveRoom();
+        
         state.poller = setInterval(async () => {
             try {
                 const update = await apiRequest(`/api/rooms/${roomId}`);
@@ -282,6 +290,7 @@ async function enterRoom(roomId) {
 function leaveRoom() {
     state.activeRoom = null;
     state.selectedCell = null;
+    state.lastRoomStatus = null;
     clearRoomPoller();
     dom.roomSection.classList.add("hidden");
     enterLobby();
@@ -294,20 +303,67 @@ function clearRoomPoller() {
     }
 }
 
+// 修正後的 renderActiveRoom：優先檢查 gameState 的 status 和 winnerId
 function renderActiveRoom() {
     const room = state.activeRoom;
     if (!room) {
         return;
     }
+    
+    // 優先讀取 gameState 內的狀態，因為 session 的 toDto 放在這裡
+    const currentStatus = room.gameState?.status || room.status;
+
+    // 如果狀態變成 FINISHED，且上一次狀態不是 FINISHED (或者是剛進入房間就是 FINISHED)
+    if (currentStatus === "FINISHED" && state.lastRoomStatus !== "FINISHED") {
+        triggerGameOverModal(room);
+    }
+    state.lastRoomStatus = currentStatus;
+
     dom.roomTitle.textContent = `${room.name} ｜ ${room.gameTypeName || room.gameType}`;
+    
     const statusText = room.started
-        ? (room.status === "FINISHED" ? "對戰結束" : "對戰進行中")
+        ? (currentStatus === "FINISHED" ? "對戰結束" : "對戰進行中")
         : "等待開始";
     dom.roomStatus.textContent = statusText;
+    
     renderRoomActions(room);
     renderPlayerList(room);
     renderBoard(room);
     renderMoveHistory(room);
+}
+
+// 修正後的觸發邏輯
+function triggerGameOverModal(room) {
+    // 優先讀取 gameState 裡的 winnerId，因為五子棋的邏輯寫在那裡
+    const winnerId = room.gameState?.winnerId || room.winnerId;
+    const isDraw = room.gameState?.draw || false;
+
+    if (isDraw) {
+        showSimpleResult("雙方平手", "DRAW");
+        return;
+    }
+
+    if (!winnerId) return;
+
+    // 1. 找出贏家的名字
+    const winnerPlayer = (room.players || []).find(p => p.id === winnerId);
+    const winnerName = winnerPlayer ? winnerPlayer.username : "未知玩家";
+
+    // 2. 找出贏家的顏色
+    let winnerColorCode = "";
+    const playerOrder = room.gameState?.playerOrder || [];
+    
+    if (playerOrder.length >= 2) {
+        if (room.gameType === "CHINESE_CHESS") {
+            if (winnerId === playerOrder[0]) winnerColorCode = "RED";
+            else if (winnerId === playerOrder[1]) winnerColorCode = "BLACK";
+        } else if (room.gameType === "GOBANG") {
+            if (winnerId === playerOrder[0]) winnerColorCode = "BLACK";
+            else if (winnerId === playerOrder[1]) winnerColorCode = "WHITE";
+        }
+    }
+
+    showSimpleResult(winnerName, winnerColorCode);
 }
 
 function renderRoomActions(room) {
@@ -403,6 +459,8 @@ function renderGobangBoard(room) {
             const value = board[x]?.[y] ?? 0;
             if (value !== 0) {
                 const stone = document.createElement("div");
+                // 你的後端五子棋是用 1 和 -1 (或其他非0值)，這裡只要不是0都畫棋子
+                // 假設 1 是先手(黑), -1 是後手(白)
                 stone.className = `stone ${value === 1 ? "black" : "white"}`;
                 cell.appendChild(stone);
             } else if (isPlayerTurn(room)) {
@@ -538,6 +596,11 @@ function renderMoveHistory(room) {
             if (move.captured) {
                 li.textContent += ` 擊吃 ${translatePiece(move.captured, move.capturedColor)}`;
             }
+            if (move.isCheck) {
+                li.textContent += " (將軍！)";
+                li.style.color = "#d0312d";
+                li.style.fontWeight = "bold";
+            }
         } else {
             li.textContent = `${move.moveNumber}. 進行動作`;
         }
@@ -578,6 +641,35 @@ function showToast(message, isError = false) {
     setTimeout(() => {
         dom.toast.classList.add("hidden");
     }, 2400);
+}
+
+// --- 結算彈窗函式 ---
+window.showSimpleResult = function(winnerName, colorCode) {
+    const modal = document.getElementById('simple-modal');
+    const textElement = document.getElementById('winner-text');
+    
+    let colorName = "";
+    if (colorCode === 'RED') colorName = "紅方";
+    else if (colorCode === 'BLACK') colorName = "黑方";
+    else if (colorCode === 'WHITE') colorName = "白方";
+    else if (colorCode === 'DRAW') colorName = "平手";
+    
+    if (colorCode === 'DRAW') {
+        textElement.innerText = `雙方平手！`;
+    } else {
+        textElement.innerText = `${winnerName} (${colorName}) 獲勝！`;
+    }
+    
+    modal.classList.remove('hidden');
+}
+
+window.closeModal = function() {
+    document.getElementById('simple-modal').classList.add('hidden');
+}
+
+window.returnToLobby = function() {
+    leaveRoom();
+    window.closeModal();
 }
 
 init();
