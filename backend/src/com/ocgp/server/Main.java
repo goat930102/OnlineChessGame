@@ -27,16 +27,12 @@ public class Main {
     }
 
     private static int resolvePort() {
-        String env = System.getenv("OCGP_PORT");
-        if (env == null || env.isBlank()) {
-            return DEFAULT_PORT;
-        }
-        try {
-            return Integer.parseInt(env.trim());
-        } catch (NumberFormatException ex) {
-            return DEFAULT_PORT;
-        }
+    String env = System.getenv("PORT"); 
+    if (env == null || env.isBlank()) {
+        throw new RuntimeException("PORT environment variable is not set");
     }
+    return Integer.parseInt(env.trim());
+}
 
     private static Path resolveStaticPath() {
         String override = System.getenv("OCGP_STATIC_DIR");
