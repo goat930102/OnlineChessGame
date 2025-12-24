@@ -5,12 +5,14 @@ WORKDIR /app
 # 複製後端原始碼
 COPY backend/src ./src
 
-# 複製前端靜態檔
-COPY frontend ./frontend
+# 複製 WebSocket library
+COPY backend/lib ./lib
 
-# 編譯 Java
-RUN mkdir out && javac -d out $(find src -name "*.java")
+# 編譯（一定要加 classpath）
+RUN mkdir out && \
+    javac -cp "lib/*" -d out $(find src -name "*.java")
 
 EXPOSE 10000
 
-CMD ["java", "-cp", "out", "com.ocgp.server.Main"]
+# 執行（一樣要加 classpath）
+CMD ["java", "-cp", "out:lib/*", "com.ocgp.server.Main"]

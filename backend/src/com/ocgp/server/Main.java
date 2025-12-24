@@ -16,18 +16,27 @@ import java.util.logging.SimpleFormatter;
 
 public class Main {
     private static final int DEFAULT_PORT = 8080;
-    private static final int DEFAULT_WS_PORT = 8091;
 
     public static void main(String[] args) throws IOException {
         initLogging();
         int port = resolvePort();
         DataStore dataStore = new DataStore();
-        int wsPort = resolveWsPort();
-        WebSocketHub wsHub = new WebSocketHub(wsPort, dataStore);
+
+        // 先啟動 HTTP（Render 需要）
+        HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
+        Path staticDir = resolveStaticPath();
+        server.createContext("/api", new ApiHandler(dataStore, null)); // 先給 null
+        server.createContext("/", new StaticFileHandler(staticDir));
+        server.setExecutor(Executors.newCachedThreadPool());
+        server.start();
+
+        // 再啟動 WebSocket（用同一個 port）
+        WebSocketHub wsHub = new WebSocketHub(port, dataStore);
         dataStore.setWebSocketHub(wsHub);
         wsHub.start();
 
-        HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
+
+
         Path staticDir = resolveStaticPath();
         server.createContext("/api", new ApiHandler(dataStore, wsHub));
         server.createContext("/", new StaticFileHandler(staticDir));
@@ -40,16 +49,16 @@ public class Main {
     }
 
     private static int resolvePort() {
-        String env = System.getenv("OCGP_PORT");
-        if (env == null || env.isBlank()) {
-            return DEFAULT_PORT;
-        }
-        try {
-            return Integer.parseInt(env.trim());
-        } catch (NumberFormatException ex) {
-            return DEFAULT_PORT;
-        }
+    String env = System.getenv("PORT");   
+    if (env == null || env.isBlank()) {
+        return DEFAULT_PORT;              
     }
+    try {
+        return Integer.parseInt(env.trim());
+    } catch (NumberFormatException ex) {
+        return DEFAULT_PORT;
+    }
+}
 
     private static Path resolveStaticPath() {
         String override = System.getenv("OCGP_STATIC_DIR");
@@ -108,15 +117,5 @@ public class Main {
         }
     }
 
-    private static int resolveWsPort() {
-        String env = System.getenv("OCGP_WS_PORT");
-        if (env == null || env.isBlank()) {
-            return DEFAULT_WS_PORT;
-        }
-        try {
-            return Integer.parseInt(env.trim());
-        } catch (NumberFormatException ex) {
-            return DEFAULT_WS_PORT;
-        }
-    }
+    
 }
