@@ -1090,15 +1090,18 @@ async function loadChat(roomId) {
 
 function connectWebSocket(roomId) {
     disconnectWebSocket();
+
     const scheme = location.protocol === "https:" ? "wss" : "ws";
-    const host = location.hostname;
-    const wsPort = (window.OCGP_WS_PORT || 8091);
-    const url = `${scheme}://${host}:${wsPort}/?roomId=${roomId}&token=${state.token}`;
+    const host = location.host; // ⭐ 包含 domain + port
+    const url = `${scheme}://${host}/?roomId=${roomId}&token=${state.token}`;
+
     try {
         const ws = new WebSocket(url);
+
         ws.onmessage = (event) => {
             try {
                 const payload = JSON.parse(event.data);
+
                 if (payload.type === "roomUpdate" && payload.room) {
                     state.activeRoom = payload.room;
                     renderActiveRoom();
@@ -1111,20 +1114,24 @@ function connectWebSocket(roomId) {
                 console.warn("WS message parse error", err);
             }
         };
+
         ws.onerror = () => {
             showToast("WebSocket 連線失敗，改用輪詢", true);
             startRoomFallback();
         };
+
         ws.onclose = () => {
             if (state.activeRoom) {
                 startRoomFallback();
             }
         };
+
         state.ws = ws;
     } catch (err) {
         console.warn("WS connect failed", err);
     }
 }
+
 
 function disconnectWebSocket() {
     if (state.ws) {
