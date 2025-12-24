@@ -37,7 +37,7 @@ public class Main {
         System.out.printf("Serving static assets from %s%n", staticDir);
         System.out.printf("WebSocket server started on port %d%n", port);
 
-        addShutdownHook(server, dataStore, wsHub);
+        //addShutdownHook(server, dataStore, wsHub);
     }
 
     private static int resolvePort() {
