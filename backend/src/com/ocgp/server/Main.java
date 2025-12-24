@@ -20,15 +20,15 @@ public class Main {
         DataStore dataStore = new DataStore();
 
         // WebSocket（跟 HTTP 共用同一個 port）
-        WebSocketHub wsHub = new WebSocketHub(port, dataStore);
-        dataStore.setWebSocketHub(wsHub);
-        wsHub.start();
+        //WebSocketHub wsHub = new WebSocketHub(port, dataStore);
+        //dataStore.setWebSocketHub(wsHub);
+        //wsHub.start();
 
         // HTTP Server
         HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
         Path staticDir = resolveStaticPath();
 
-        server.createContext("/api", new ApiHandler(dataStore, wsHub));
+        server.createContext("/api", new ApiHandler(dataStore, null));
         server.createContext("/", new StaticFileHandler(staticDir));
         server.setExecutor(Executors.newCachedThreadPool());
         server.start();
@@ -74,11 +74,11 @@ public class Main {
             System.out.println("Shutting down server...");
             try {
                 server.stop((int) Duration.ofSeconds(2).toSeconds());
-                try {
+                /*try {
                     wsHub.stop(1000);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
-                }
+                }*/
             } finally {
                 dataStore.close();
             }
