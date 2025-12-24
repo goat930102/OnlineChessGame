@@ -14,5 +14,5 @@ RUN mkdir out && \
 
 EXPOSE 10000
 
-# 執行（一樣要加 classpath）
+# 執行（Linux 用 :）
 CMD ["java", "-cp", "out:lib/*", "com.ocgp.server.Main"]
