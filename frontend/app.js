@@ -8,7 +8,16 @@ const state = {
     lobbyPoller: null,     // 大廳輪詢
     selectedCell: null,
     lastRoomStatus: null,
-    lastCurrentPlayerId: null 
+    lastCurrentPlayerId: null,
+    chatMessages: [],
+    chatSinceId: 0,
+    ws: null,
+    pingTimer: null,
+    lastPingMs: null,
+    turnTimer: null,
+    turnDeadline: null,
+    totalTimer: null,
+    startedAt: null
 };
 
 const dom = {
@@ -35,7 +44,18 @@ const dom = {
     toast: document.getElementById("toast"),
     simpleModal: document.getElementById("simple-modal"),
     winnerText: document.getElementById("winner-text"),
-    brandTitle: document.getElementById("brand-title")
+    brandTitle: document.getElementById("brand-title"),
+    filterName: document.getElementById("filter-name"),
+    filterGameType: document.getElementById("filter-game-type"),
+    filterInvite: document.getElementById("filter-invite"),
+    applyFilterBtn: document.getElementById("apply-filter"),
+    pingBtn: document.getElementById("ping-btn"),
+    pingDisplay: document.getElementById("ping-display"),
+    turnTimer: document.getElementById("turn-timer"),
+    totalTimer: document.getElementById("total-timer"),
+    chatMessages: document.getElementById("chat-messages"),
+    chatForm: document.getElementById("chat-form"),
+    chatInput: document.getElementById("chat-input")
 };
 
 // --- Board orientation helpers ---
@@ -187,6 +207,42 @@ function bindEvents() {
         logout();
     });
 
+    if (dom.chatForm) {
+        dom.chatForm.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const content = dom.chatInput.value.trim();
+            if (!content || !state.activeRoom) return;
+            try {
+                await apiRequest(`/api/rooms/${state.activeRoom.id}/chat`, {
+                    method: "POST",
+                    body: JSON.stringify({ content })
+                });
+                dom.chatInput.value = "";
+            } catch (err) {
+                showToast(err.message || "送出訊息失敗", true);
+            }
+        });
+    }
+
+    if (dom.applyFilterBtn) {
+        dom.applyFilterBtn.addEventListener("click", async () => {
+            await refreshRooms();
+        });
+    }
+
+    if (dom.pingBtn) {
+        dom.pingBtn.addEventListener("click", async () => {
+            const start = performance.now();
+            try {
+                await apiRequest("/api/ping");
+                const latency = Math.round(performance.now() - start);
+                showToast(`延遲：約 ${latency} ms`);
+            } catch (err) {
+                showToast("Ping 失敗", true);
+            }
+        });
+    }
+
     // 點擊標題回大廳
     if (dom.brandTitle) {
         const goHome = () => {
@@ -230,6 +286,9 @@ function logout() {
     localStorage.removeItem("ocgpUser");
     clearRoomPoller();
     clearLobbyPoller();
+    clearPingMonitor();
+    clearTurnTimer();
+    clearTotalTimer();
     updateUserInfo();
     showAuth();
 }
@@ -237,6 +296,9 @@ function logout() {
 function showAuth() {
     clearRoomPoller();
     clearLobbyPoller();
+    clearPingMonitor();
+    clearTurnTimer();
+    clearTotalTimer();
     dom.authSection.classList.remove("hidden");
     dom.lobbySection.classList.add("hidden");
     dom.roomSection.classList.add("hidden");
@@ -248,6 +310,10 @@ function enterLobby() {
     dom.lobbySection.classList.remove("hidden");
 
     clearRoomPoller();
+    disconnectWebSocket();
+    clearTurnTimer();
+    clearTotalTimer();
+    startPingMonitor();
     startLobbyPoller(); // ✅ 大廳定時更新
     fetchGamesAndRooms();
 }
@@ -276,21 +342,36 @@ async function fetchGamesAndRooms() {
     }
 
     await refreshRooms();
+    startPingMonitor();
 }
 
 function populateGameSelect() {
     dom.roomGameTypeSelect.innerHTML = "";
+    dom.filterGameType.innerHTML = "<option value=\"\">全部</option>";
     Object.values(state.games).forEach((game) => {
         const option = document.createElement("option");
         option.value = game.code;
         option.textContent = `${game.name}`;
         dom.roomGameTypeSelect.appendChild(option);
+
+        const optFilter = document.createElement("option");
+        optFilter.value = game.code;
+        optFilter.textContent = game.name;
+        dom.filterGameType.appendChild(optFilter);
     });
 }
 
 async function refreshRooms() {
     try {
-        const response = await apiRequest("/api/rooms");
+        const params = [];
+        const name = dom.filterName?.value.trim() || "";
+        const gameType = dom.filterGameType?.value || "";
+        const invite = dom.filterInvite?.value.trim() || "";
+        if (name) params.push(`name=${encodeURIComponent(name)}`);
+        if (gameType) params.push(`gameType=${encodeURIComponent(gameType)}`);
+        if (invite) params.push(`inviteCode=${encodeURIComponent(invite)}`);
+        const qs = params.length ? `?${params.join("&")}` : "";
+        const response = await apiRequest(`/api/rooms${qs}`);
         state.rooms = response.rooms || [];
         renderRoomList();
     } catch (error) {
@@ -336,7 +417,15 @@ function renderRoomList() {
             button.disabled = true;
             button.textContent = "請先登入";
         } else {
-            button.addEventListener("click", () => joinRoom(room.id));
+            button.addEventListener("click", () => {
+                if (room.private) {
+                    const code = prompt("請輸入邀請碼");
+                    if (code === null) return;
+                    joinRoom(room.id, code.trim());
+                } else {
+                    joinRoom(room.id);
+                }
+            });
         }
         actions.appendChild(button);
 
@@ -346,9 +435,9 @@ function renderRoomList() {
     });
 }
 
-async function joinRoom(roomId) {
+async function joinRoom(roomId, inviteCode = "") {
     try {
-        await apiRequest(`/api/rooms/${roomId}/join`, { method: "POST" });
+        await apiRequest(`/api/rooms/${roomId}/join`, { method: "POST", body: JSON.stringify(inviteCode ? { inviteCode } : {}) });
         showToast("已加入房間");
         await enterRoom(roomId);
     } catch (error) {
@@ -362,26 +451,23 @@ async function enterRoom(roomId) {
         clearRoomPoller();
         clearLobbyPoller(); // ✅ 進房後停止大廳輪詢
         state.lastRoomStatus = null; 
+        disconnectWebSocket();
         
         const response = await apiRequest(`/api/rooms/${roomId}`);
         state.activeRoom = response.room;
+        state.chatMessages = [];
+        state.chatSinceId = 0;
+        await loadChat(roomId);
+        connectWebSocket(roomId);
+        startTotalTimerFromRoom(state.activeRoom);
         
         dom.lobbySection.classList.add("hidden");
         dom.roomSection.classList.remove("hidden");
         
         renderActiveRoom();
-        
-        state.poller = setInterval(async () => {
-            try {
-                const update = await apiRequest(`/api/rooms/${roomId}`);
-                state.activeRoom = update.room;
-                renderActiveRoom();
-            } catch (error) {
-                // ✅ 房間被刪除/不存在：自動回大廳
-                showToast("房間已關閉或不存在，已返回大廳", true);
-                leaveRoom();
-            }
-        }, 2500);
+        if (!state.ws) {
+            startRoomFallback();
+        }
     } catch (error) {
         showToast(error.message || "無法進入房間", true);
         enterLobby();
@@ -402,9 +488,14 @@ function leaveRoom() {
     requestLeaveActiveRoom();
 
     state.activeRoom = null;
+    state.chatMessages = [];
+    state.chatSinceId = 0;
     state.selectedCell = null;
     state.lastRoomStatus = null;
     clearRoomPoller();
+    disconnectWebSocket();
+    clearTurnTimer();
+    clearTotalTimer();
     dom.roomSection.classList.add("hidden");
     enterLobby();
 }
@@ -416,11 +507,56 @@ function clearRoomPoller() {
     }
 }
 
+function startRoomFallback() {
+    clearRoomPoller();
+    state.poller = setInterval(async () => {
+        if (!state.activeRoom) return;
+        try {
+            const update = await apiRequest(`/api/rooms/${state.activeRoom.id}`);
+            state.activeRoom = update.room;
+            renderActiveRoom();
+            await loadChat(state.activeRoom.id);
+        } catch (error) {
+            showToast("房間已關閉或不存在，已返回大廳", true);
+            leaveRoom();
+        }
+    }, 2500);
+}
+
+function startPingMonitor() {
+    clearPingMonitor();
+    if (!state.token) return;
+    const pingOnce = async () => {
+        const start = performance.now();
+        try {
+            await apiRequest("/api/ping");
+            state.lastPingMs = Math.round(performance.now() - start);
+            if (dom.pingDisplay) {
+                dom.pingDisplay.textContent = `延遲：約 ${state.lastPingMs} ms`;
+            }
+        } catch (_) {
+            if (dom.pingDisplay) {
+                dom.pingDisplay.textContent = "延遲：--";
+            }
+        }
+    };
+    pingOnce();
+    state.pingTimer = setInterval(pingOnce, 4000);
+}
+
+function clearPingMonitor() {
+    if (state.pingTimer) {
+        clearInterval(state.pingTimer);
+        state.pingTimer = null;
+    }
+}
+
 function renderActiveRoom() {
     const room = state.activeRoom;
     if (!room) {
         return;
     }
+    startTotalTimerFromRoom(room);
 
     const currentStatus = room.gameState?.status || room.status;
 
@@ -432,12 +568,15 @@ function renderActiveRoom() {
 
     // 輪到你提示：文字 + toast（只在「輪到你」那一刻觸發一次）
     const currentPlayerId = room.currentPlayerId ?? null;
+    const prevPlayerId = state.lastCurrentPlayerId;
     const isMyTurnNow = room.started && currentStatus === "IN_PROGRESS" && state.user?.id && currentPlayerId === state.user.id;
-    const wasMyTurnBefore = state.lastCurrentPlayerId === state.user?.id;
+    const wasMyTurnBefore = prevPlayerId === state.user?.id;
 
     if (isMyTurnNow && !wasMyTurnBefore) {
         showToast("輪到你了");
     }
+    const serverDeadline = room.turnDeadline ? Date.parse(room.turnDeadline) : null;
+    updateTurnDeadline(isMyTurnNow, currentPlayerId, prevPlayerId, serverDeadline);
     state.lastCurrentPlayerId = currentPlayerId;
 
     dom.roomTitle.textContent = `${room.name} ｜ ${room.gameTypeName || room.gameType}`;
@@ -457,6 +596,7 @@ function renderActiveRoom() {
     renderPlayerList(room);
     renderBoard(room);
     renderMoveHistory(room);
+    renderChat();
 }
 
 function triggerGameOverModal(room) {
@@ -801,6 +941,113 @@ function renderMoveHistory(room) {
     });
 }
 
+function renderChat() {
+    if (!dom.chatMessages) return;
+    dom.chatMessages.innerHTML = "";
+    state.chatMessages.forEach(msg => {
+        const div = document.createElement("div");
+        const user = (state.activeRoom?.players || []).find(p => p.id === msg.userId);
+        const name = user ? user.username : msg.userId;
+        div.textContent = `${name}: ${msg.content}`;
+        dom.chatMessages.appendChild(div);
+    });
+    dom.chatMessages.scrollTop = dom.chatMessages.scrollHeight;
+}
+
+function updateTurnDeadline(isMyTurnNow, currentPlayerId, prevPlayerId, serverDeadline) {
+    if (!state.activeRoom || !state.activeRoom.started) {
+        state.turnDeadline = null;
+        clearTurnTimer();
+        setTurnTimerText("--");
+        return;
+    }
+    const status = state.activeRoom.gameState?.status || state.activeRoom.status;
+    if (status !== "IN_PROGRESS") {
+        state.turnDeadline = null;
+        clearTurnTimer();
+        setTurnTimerText("--");
+        return;
+    }
+    // 以後端提供的 deadline 為準，若無則依玩家變更重置
+    if (serverDeadline) {
+        state.turnDeadline = serverDeadline;
+    } else if (prevPlayerId !== currentPlayerId) {
+        state.turnDeadline = Date.now() + 15000; // fallback
+    }
+    startTurnTimer();
+}
+
+function startTurnTimer() {
+    clearTurnTimer();
+    if (!state.turnDeadline) return;
+    const tick = () => {
+        if (!state.turnDeadline) {
+            setTurnTimerText("--");
+            return;
+        }
+        const remaining = Math.max(0, state.turnDeadline - Date.now());
+        const seconds = (remaining / 1000).toFixed(1);
+        setTurnTimerText(`${seconds}s`);
+        if (remaining <= 0) {
+            // 停止顯示，等待後端判負
+            clearTurnTimer();
+        }
+    };
+    tick();
+    state.turnTimer = setInterval(tick, 200);
+}
+
+function clearTurnTimer() {
+    if (state.turnTimer) {
+        clearInterval(state.turnTimer);
+        state.turnTimer = null;
+    }
+}
+
+function setTurnTimerText(text) {
+    if (dom.turnTimer) {
+        dom.turnTimer.textContent = `倒數：${text}`;
+    }
+}
+
+function startTotalTimerFromRoom(room) {
+    const startedAt = room?.gameState?.startedAt || room?.startedAt;
+    if (!startedAt) {
+        setTotalTimerText("--");
+        return;
+    }
+    if (state.startedAt === startedAt && state.totalTimer) {
+        return;
+    }
+    clearTotalTimer();
+    state.startedAt = startedAt;
+    const startMs = Date.parse(startedAt);
+    const tick = () => {
+        const elapsed = Math.max(0, Date.now() - startMs);
+        const seconds = Math.floor(elapsed / 1000);
+        const mins = Math.floor(seconds / 60);
+        const secs = seconds % 60;
+        setTotalTimerText(`${mins}:${secs.toString().padStart(2, "0")}`);
+    };
+    tick();
+    state.totalTimer = setInterval(tick, 1000);
+}
+
+function clearTotalTimer() {
+    if (state.totalTimer) {
+        clearInterval(state.totalTimer);
+        state.totalTimer = null;
+    }
+    state.startedAt = null;
+    setTotalTimerText("--");
+}
+
+function setTotalTimerText(text) {
+    if (dom.totalTimer) {
+        dom.totalTimer.textContent = `總用時：${text}`;
+    }
+}
+
 async function apiRequest(path, options = {}) {
     const headers = options.headers ? { ...options.headers } : {};
     if (options.body && !headers["Content-Type"]) {
@@ -825,6 +1072,65 @@ async function apiRequest(path, options = {}) {
         throw new Error(message);
     }
     return parsed;
+}
+
+async function loadChat(roomId) {
+    try {
+        const resp = await apiRequest(`/api/rooms/${roomId}/chat?sinceId=${state.chatSinceId || 0}`);
+        const messages = resp.messages || [];
+        if (messages.length) {
+            state.chatSinceId = messages[messages.length - 1].id;
+            state.chatMessages = [...state.chatMessages, ...messages];
+            renderChat();
+        }
+    } catch (err) {
+        console.warn("loadChat failed", err);
+    }
+}
+
+function connectWebSocket(roomId) {
+    disconnectWebSocket();
+    const scheme = location.protocol === "https:" ? "wss" : "ws";
+    const host = location.hostname;
+    const wsPort = (window.OCGP_WS_PORT || 8091);
+    const url = `${scheme}://${host}:${wsPort}/?roomId=${roomId}&token=${state.token}`;
+    try {
+        const ws = new WebSocket(url);
+        ws.onmessage = (event) => {
+            try {
+                const payload = JSON.parse(event.data);
+                if (payload.type === "roomUpdate" && payload.room) {
+                    state.activeRoom = payload.room;
+                    renderActiveRoom();
+                } else if (payload.type === "chatMessage" && payload.message) {
+                    state.chatMessages.push(payload.message);
+                    state.chatSinceId = payload.message.id || state.chatSinceId;
+                    renderChat();
+                }
+            } catch (err) {
+                console.warn("WS message parse error", err);
+            }
+        };
+        ws.onerror = () => {
+            showToast("WebSocket 連線失敗，改用輪詢", true);
+            startRoomFallback();
+        };
+        ws.onclose = () => {
+            if (state.activeRoom) {
+                startRoomFallback();
+            }
+        };
+        state.ws = ws;
+    } catch (err) {
+        console.warn("WS connect failed", err);
+    }
+}
+
+function disconnectWebSocket() {
+    if (state.ws) {
+        state.ws.close();
+        state.ws = null;
+    }
 }
 
 function showToast(message, isError = false) {

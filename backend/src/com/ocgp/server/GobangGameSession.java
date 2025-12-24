@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.time.Instant;
 
 public class GobangGameSession implements GameSession {
     private static final int BOARD_SIZE = 15;
@@ -15,6 +16,7 @@ public class GobangGameSession implements GameSession {
     private String status = "READY";
     private String winnerId;
     private boolean draw;
+    private Instant startedAt;
 
     @Override
     public GameType getGameType() {
@@ -37,6 +39,7 @@ public class GobangGameSession implements GameSession {
         status = "IN_PROGRESS";
         winnerId = null;
         draw = false;
+        startedAt = Instant.now();
     }
 
     @Override
@@ -94,6 +97,7 @@ public class GobangGameSession implements GameSession {
         dto.put("winnerId", winnerId);
         dto.put("draw", draw);
         dto.put("playerOrder", players);
+        dto.put("startedAt", startedAt != null ? startedAt.toString() : null);
         return dto;
     }
 
@@ -108,6 +112,25 @@ public class GobangGameSession implements GameSession {
             return null;
         }
         return players.get(currentPlayerIndex);
+    }
+
+    @Override
+    public synchronized void forceWin(String winner) {
+        if (!"IN_PROGRESS".equals(status)) {
+            return;
+        }
+        status = "FINISHED";
+        winnerId = winner;
+    }
+
+    @Override
+    public List<String> getPlayerOrder() {
+        return players;
+    }
+
+    @Override
+    public Instant getStartedAt() {
+        return startedAt;
     }
 
     private void ensureInProgress() {
