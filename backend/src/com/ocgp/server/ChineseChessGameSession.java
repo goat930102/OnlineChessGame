@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.time.Instant;
 
 public class ChineseChessGameSession implements GameSession {
     private static final int ROWS = 10;
@@ -15,6 +16,7 @@ public class ChineseChessGameSession implements GameSession {
     private int currentPlayerIndex = 0;
     private String status = "READY";
     private String winnerId;
+    private Instant startedAt;
 
     @Override
     public GameType getGameType() {
@@ -32,6 +34,7 @@ public class ChineseChessGameSession implements GameSession {
         currentPlayerIndex = 0; // Red starts
         status = "IN_PROGRESS";
         winnerId = null;
+        startedAt = Instant.now();
     }
 
     @Override
@@ -113,7 +116,15 @@ public class ChineseChessGameSession implements GameSession {
             return;
         }
 
+        // 若輪到對手但其無任何合法行棋，對局結束（當前行棋者勝）
+        if (!hasAnyLegalMove(opponentColor)) {
+            winnerId = playerId;
+            status = "FINISHED";
+            return;
+        }
+
         currentPlayerIndex = (currentPlayerIndex + 1) % players.size();
+
     }
 
     @Override
@@ -143,6 +154,7 @@ public class ChineseChessGameSession implements GameSession {
         dto.put("moves", List.copyOf(moves));
         dto.put("playerOrder", players);
         dto.put("currentPlayerColor", currentPlayerIndex == 0 ? "RED" : "BLACK");
+        dto.put("startedAt", startedAt != null ? startedAt.toString() : null);
         return dto;
     }
 
@@ -157,6 +169,25 @@ public class ChineseChessGameSession implements GameSession {
             return null;
         }
         return players.get(currentPlayerIndex);
+    }
+
+    @Override
+    public synchronized void forceWin(String winner) {
+        if (!"IN_PROGRESS".equals(status)) {
+            return;
+        }
+        status = "FINISHED";
+        winnerId = winner;
+    }
+
+    @Override
+    public List<String> getPlayerOrder() {
+        return players;
+    }
+
+    @Override
+    public Instant getStartedAt() {
+        return startedAt;
     }
 
     private void ensureInProgress() {
@@ -265,6 +296,66 @@ public class ChineseChessGameSession implements GameSession {
             }
         }
         return false;
+    }
+
+    private boolean hasAnyLegalMove(PieceColor color) {
+        for (int fromRow = 0; fromRow < ROWS; fromRow++) {
+            for (int fromCol = 0; fromCol < COLS; fromCol++) {
+                Piece piece = board[fromRow][fromCol];
+                if (piece == null || piece.color != color) {
+                    continue;
+                }
+
+                for (int toRow = 0; toRow < ROWS; toRow++) {
+                    for (int toCol = 0; toCol < COLS; toCol++) {
+                        if (fromRow == toRow && fromCol == toCol) {
+                            continue;
+                        }
+
+                        Piece target = board[toRow][toCol];
+                        if (target != null && target.color == color) {
+                            continue; // 不能吃己方
+                        }
+
+                        boolean capturing = (target != null);
+                        if (!isLegalMove(piece, fromRow, fromCol, toRow, toCol, capturing)) {
+                            continue;
+                        }
+
+                        if (isMoveSafeForOwnGeneral(piece, fromRow, fromCol, toRow, toCol)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean isMoveSafeForOwnGeneral(Piece piece, int fromRow, int fromCol, int toRow, int toCol) {
+        Piece captured = board[toRow][toCol];
+
+        // 模擬走子
+        performMove(piece, fromRow, fromCol, toRow, toCol);
+
+        boolean illegal = false;
+        // 將帥不可見面
+        if (generalsFacing()) {
+            illegal = true;
+        }
+        // 不可走到讓己方仍被將軍
+        if (!illegal && isPlayerInCheck(piece.color)) {
+            illegal = true;
+        }
+
+        // 回復棋盤
+        performMove(piece, toRow, toCol, fromRow, fromCol);
+        if (captured != null) {
+            // 還原被吃子
+            placePiece(captured, toRow, toCol);
+        }
+
+        return !illegal;
     }
 
     private boolean generalsFacing() {

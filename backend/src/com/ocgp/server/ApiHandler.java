@@ -13,13 +13,18 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.time.Instant;
 
 public class ApiHandler implements HttpHandler {
     private static final String API_ROOT = "/api";
-    private final DataStore dataStore;
+    private static final int EMPTY_ROOM_TTL_SECONDS = 30;
 
-    public ApiHandler(DataStore dataStore) {
+    private final DataStore dataStore;
+    private final WebSocketHub wsHub;
+
+    public ApiHandler(DataStore dataStore, WebSocketHub wsHub) {
         this.dataStore = dataStore;
+        this.wsHub = wsHub;
     }
 
     @Override
@@ -40,6 +45,8 @@ public class ApiHandler implements HttpHandler {
                 handleMe(exchange);
             } else if ("GET".equals(method) && "/games".equals(path)) {
                 handleGames(exchange);
+            } else if ("GET".equals(method) && "/ping".equals(path)) {
+                handlePing(exchange);
             } else if ("/rooms".equals(path)) {
                 handleRoomsRoot(exchange);
             } else if (path.startsWith("/rooms/")) {
@@ -92,6 +99,10 @@ public class ApiHandler implements HttpHandler {
         HttpUtils.sendJson(exchange, 200, Map.of("games", dataStore.getGameCatalog()));
     }
 
+    private void handlePing(HttpExchange exchange) throws IOException {
+        HttpUtils.sendJson(exchange, 200, Map.of("now", Instant.now().toString()));
+    }
+
     private void handleRoomsRoot(HttpExchange exchange) throws IOException {
         String method = exchange.getRequestMethod().toUpperCase();
         if ("GET".equals(method)) {
@@ -100,8 +111,18 @@ public class ApiHandler implements HttpHandler {
             if (query.containsKey("gameType")) {
                 filter = Optional.of(GameType.fromString(query.get("gameType")));
             }
+            String nameQuery = query.getOrDefault("name", "").trim().toLowerCase();
+            String inviteQuery = query.getOrDefault("inviteCode", "").trim();
             List<Map<String, Object>> rooms = new ArrayList<>();
             for (Room room : dataStore.listRooms(filter)) {
+                if (!nameQuery.isEmpty() && !room.getName().toLowerCase().contains(nameQuery)) {
+                    continue;
+                }
+                if (room.isPrivateRoom()) {
+                    if (inviteQuery.isEmpty() || !room.getInviteCode().equals(inviteQuery)) {
+                        continue;
+                    }
+                }
                 rooms.add(room.toDto(dataStore));
             }
             HttpUtils.sendJson(exchange, 200, Map.of("rooms", rooms));
@@ -127,27 +148,86 @@ public class ApiHandler implements HttpHandler {
         String roomId = parts[0];
         Room room = dataStore.findRoom(roomId);
         String method = exchange.getRequestMethod().toUpperCase();
+
         if (parts.length == 1) {
             if ("GET".equals(method)) {
+                // 查看房間詳情需驗證
+                requireUser(exchange);
                 HttpUtils.sendJson(exchange, 200, Map.of("room", room.toDto(dataStore)));
             } else {
                 throw new HttpStatusException(405, "Unsupported method for room");
             }
             return;
         }
+
         String action = parts[1];
         switch (action) {
             case "join" -> handleJoinRoom(exchange, room);
+            case "leave" -> handleLeaveRoom(exchange, room);
             case "start" -> handleStartRoom(exchange, room);
             case "move" -> handleRoomMove(exchange, room);
+            case "restart" -> handleRestartRoom(exchange, room); // ✅ 新增
+            case "edit" -> handleEditRoom(exchange, room);
+            case "chat" -> handleChat(exchange, room);
             default -> throw new HttpStatusException(404, "Unknown room action: " + action);
         }
+    }
+
+    private void handleRestartRoom(HttpExchange exchange, Room room) throws IOException {
+        ensurePost(exchange);
+        User user = requireUser(exchange);
+
+        // 只允許房主，且必須是 FINISHED 才能 restart
+        room.restartGame(user.getId());
+
+        dataStore.persistRoom(room);
+        wsHub.broadcastRoom(room);
+        addSystemMessage(room.getId(), user.getId(), "重新開始對局");
+        HttpUtils.sendJson(exchange, 200, Map.of("room", room.toDto(dataStore)));
     }
 
     private void handleJoinRoom(HttpExchange exchange, Room room) throws IOException {
         ensurePost(exchange);
         User user = requireUser(exchange);
+
+        // 重新加入：先取消「空房延遲刪除」排程
+        dataStore.cancelScheduledRoomDeletion(room.getId());
+
+        if (room.isPrivateRoom()) {
+            Map<String, Object> payload = readJsonObject(exchange);
+            String code = asString(payload.getOrDefault("inviteCode", ""), "inviteCode");
+            room.ensureInviteCode(code);
+        }
+
         room.addPlayer(user.getId());
+        dataStore.persistRoom(room);
+        wsHub.broadcastRoom(room);
+        addSystemMessage(room.getId(), user.getId(), "加入房間");
+        HttpUtils.sendJson(exchange, 200, Map.of("room", room.toDto(dataStore)));
+    }
+
+    private void handleLeaveRoom(HttpExchange exchange, Room room) throws IOException {
+        ensurePost(exchange);
+        User user = requireUser(exchange);
+
+        Instant expiry = room.removePlayer(user.getId());
+        dataStore.persistRoom(room);
+        if (expiry != null) {
+            dataStore.scheduleDisconnectCheck(room.getId(), user.getId(), expiry);
+        }
+
+        // 房間無人：不立刻刪除，改為 30 秒後刪除（若期間有人加入會取消）
+        if (room.getPlayerCount() == 0) {
+            dataStore.scheduleRoomDeletionIfEmpty(room.getId());
+            HttpUtils.sendJson(exchange, 200, Map.of(
+                    "scheduledDeletion", true,
+                    "ttlSeconds", EMPTY_ROOM_TTL_SECONDS
+            ));
+            return;
+        }
+
+        wsHub.broadcastRoom(room);
+        addSystemMessage(room.getId(), user.getId(), "離開房間");
         HttpUtils.sendJson(exchange, 200, Map.of("room", room.toDto(dataStore)));
     }
 
@@ -156,6 +236,9 @@ public class ApiHandler implements HttpHandler {
         User user = requireUser(exchange);
         room.ensureHost(user.getId());
         room.startGame();
+        dataStore.persistRoom(room);
+        wsHub.broadcastRoom(room);
+        addSystemMessage(room.getId(), user.getId(), "開始對局");
         HttpUtils.sendJson(exchange, 200, Map.of("room", room.toDto(dataStore)));
     }
 
@@ -164,7 +247,67 @@ public class ApiHandler implements HttpHandler {
         User user = requireUser(exchange);
         Map<String, Object> payload = readJsonObject(exchange);
         room.submitMove(user.getId(), payload);
+        wsHub.broadcastRoom(room);
         HttpUtils.sendJson(exchange, 200, Map.of("room", room.toDto(dataStore)));
+    }
+
+    private void handleEditRoom(HttpExchange exchange, Room room) throws IOException {
+        ensurePost(exchange);
+        User user = requireUser(exchange);
+        Map<String, Object> payload = readJsonObject(exchange);
+        String newName = payload.containsKey("name") ? asString(payload.get("name"), "name") : room.getName();
+        GameType newGameType = payload.containsKey("gameType") ? GameType.fromString(asString(payload.get("gameType"), "gameType")) : room.getGameType();
+        boolean newPrivate = payload.containsKey("private") && asBoolean(payload.get("private"));
+        String inviteCode = null;
+        if (payload.containsKey("inviteCode")) {
+            inviteCode = asString(payload.get("inviteCode"), "inviteCode");
+        } else if (newPrivate && room.getInviteCode() != null) {
+            inviteCode = room.getInviteCode();
+        }
+        room.updateSettings(user.getId(), newName, newGameType, newPrivate, inviteCode);
+        dataStore.persistRoom(room);
+        wsHub.broadcastRoom(room);
+        HttpUtils.sendJson(exchange, 200, Map.of("room", room.toDto(dataStore)));
+    }
+
+    private void addSystemMessage(String roomId, String actorId, String text) {
+        if (text == null || text.isBlank()) return;
+        try {
+            dataStore.addChatMessage(roomId, actorId, "[系統] " + text);
+            List<Map<String, Object>> latest = dataStore.getChatMessages(roomId, 0);
+            Map<String, Object> msg = latest.isEmpty() ? Map.of() : latest.get(latest.size() - 1);
+            wsHub.broadcastChat(roomId, msg);
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void handleChat(HttpExchange exchange, Room room) throws IOException {
+        String method = exchange.getRequestMethod().toUpperCase();
+        if ("POST".equals(method)) {
+            User user = requireUser(exchange);
+            room.ensurePlayer(user.getId());
+            Map<String, Object> payload = readJsonObject(exchange);
+            String content = asString(payload.get("content"), "content");
+            dataStore.addChatMessage(room.getId(), user.getId(), content);
+            List<Map<String, Object>> latest = dataStore.getChatMessages(room.getId(), 0);
+            Map<String, Object> message = latest.isEmpty() ? Map.of() : latest.get(latest.size() - 1);
+            wsHub.broadcastChat(room.getId(), message);
+            HttpUtils.sendJson(exchange, 201, Map.of("ok", true, "message", message));
+        } else if ("GET".equals(method)) {
+            User user = requireUser(exchange);
+            room.ensurePlayer(user.getId());
+            Map<String, String> query = parseQuery(exchange);
+            long since = 0;
+            if (query.containsKey("sinceId")) {
+                try {
+                    since = Long.parseLong(query.get("sinceId"));
+                } catch (NumberFormatException ignored) { }
+            }
+            List<Map<String, Object>> messages = dataStore.getChatMessages(room.getId(), since);
+            HttpUtils.sendJson(exchange, 200, Map.of("messages", messages));
+        } else {
+            throw new HttpStatusException(405, "Unsupported chat method");
+        }
     }
 
     private void ensurePost(HttpExchange exchange) {

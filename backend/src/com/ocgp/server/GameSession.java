@@ -15,4 +15,10 @@ public interface GameSession {
     String getStatus();
 
     String getCurrentPlayerId();
+
+    void forceWin(String winnerId);
+
+    List<String> getPlayerOrder();
+
+    java.time.Instant getStartedAt();
 }

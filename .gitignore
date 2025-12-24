@@ -1,1 +1,4 @@
 *.class
+*.lst
+backend/out/
+backend/lib/

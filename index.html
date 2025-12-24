@@ -9,7 +9,7 @@
 <body>
     <header>
         <div class="brand">
-            <h1 id="brand-title" role="button" tabindex="0">線上棋類遊戲平台 (OCGP)</h1>
+            <h1>線上棋類遊戲平台 (OCGP)</h1>
             <p class="subtitle">多人即時對弈、房間管理與棋譜紀錄的一站式平台</p>
         </div>
         <div id="user-info" class="hidden">
@@ -51,7 +51,7 @@
 
         <section id="lobby-section" class="section-grid lobby-grid hidden">
             <div class="card">
-                <h2>建立 / 搜尋房間</h2>
+                <h2>建立對戰房間</h2>
                 <form id="create-room-form">
                     <label>
                         房間名稱
@@ -66,24 +66,6 @@
                     </label>
                     <button type="submit">建立</button>
                 </form>
-                <div class="filters">
-                    <h3>房間搜尋</h3>
-                    <label>
-                        名稱關鍵字
-                        <input type="text" id="filter-name" placeholder="輸入名稱關鍵字">
-                    </label>
-                    <label>
-                        遊戲種類
-                        <select id="filter-game-type"></select>
-                    </label>
-                    <label>
-                        邀請碼（私人房）
-                        <input type="text" id="filter-invite" placeholder="輸入邀請碼">
-                    </label>
-                    <button id="apply-filter" type="button">套用搜尋</button>
-                    <button id="ping-btn" type="button">測試延遲</button>
-                    <div id="ping-display" aria-live="polite">延遲：--</div>
-                </div>
             </div>
             <div class="card">
                 <h2>公開房間列表</h2>
@@ -98,19 +80,9 @@
                 <p id="room-status"></p>
                 <div id="room-actions"></div>
                 <div id="player-list"></div>
-                <div id="chat-panel">
-                    <h3>聊天</h3>
-                    <div id="chat-messages"></div>
-                    <form id="chat-form">
-                        <input type="text" id="chat-input" placeholder="輸入訊息..." autocomplete="off" />
-                        <button type="submit">送出</button>
-                    </form>
-                </div>
             </div>
             <div class="card">
                 <h3>棋盤</h3>
-                <div id="turn-timer" aria-live="polite">倒數：--</div>
-                <div id="total-timer" aria-live="polite" class="timer-box">總用時：--</div>
                 <div id="board-container"></div>
             </div>
             <div class="card">
@@ -123,14 +95,11 @@
     <div id="simple-modal" class="modal-overlay hidden">
         <div class="simple-card">
             <h2 class="modal-title">遊戲結束</h2>
-
+            
             <div class="modal-body">
-                <!-- 你贏了 / 你輸了 / 平手 -->
-                <p id="result-text" class="result-text"></p>
-
                 <p id="winner-text" class="winner-text"></p>
             </div>
-
+    
             <div class="modal-actions">
                 <button onclick="closeModal()" class="btn-secondary">關閉</button>
                 <button onclick="returnToLobby()" class="btn-primary">返回大廳</button>

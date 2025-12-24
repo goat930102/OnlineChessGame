@@ -1,0 +1,132 @@
+Dec 24, 2025 3:05:27 AM com.ocgp.server.DataStore initConnection
+INFO: SQLite DB at D:\.vscode\software\backend\out\data\ocgp.sqlite
+Dec 24, 2025 3:05:27 AM com.ocgp.server.DataStore loadFromDb
+INFO: Loaded from DB: users=0 rooms=0
+Dec 24, 2025 3:05:27 AM com.ocgp.server.WebSocketHub onStart
+INFO: WebSocket server started
+Dec 24, 2025 3:08:27 AM com.ocgp.server.DataStore register
+INFO: User registered: ABC (e9b9ffce-0d1c-4221-be46-a2828a034bb2)
+Dec 24, 2025 3:08:56 AM com.ocgp.server.DataStore register
+INFO: User registered: AAA (6089e8b9-2bf3-41b4-ab7d-0b91f9a3f86f)
+Dec 24, 2025 3:09:03 AM com.ocgp.server.Room addPlayer
+INFO: User e9b9ffce-0d1c-4221-be46-a2828a034bb2 joined room e837ce28-4016-4404-ac50-134b86a49c63
+Dec 24, 2025 3:09:03 AM com.ocgp.server.DataStore createRoom
+INFO: Room created: 有種來啊 (e837ce28-4016-4404-ac50-134b86a49c63) by user e9b9ffce-0d1c-4221-be46-a2828a034bb2
+Dec 24, 2025 3:09:03 AM com.ocgp.server.WebSocketHub onOpen
+INFO: WS connected: user e9b9ffce-0d1c-4221-be46-a2828a034bb2 room e837ce28-4016-4404-ac50-134b86a49c63
+Dec 24, 2025 3:09:08 AM com.ocgp.server.Room addPlayer
+INFO: User 6089e8b9-2bf3-41b4-ab7d-0b91f9a3f86f joined room e837ce28-4016-4404-ac50-134b86a49c63
+Dec 24, 2025 3:09:08 AM com.ocgp.server.WebSocketHub onOpen
+INFO: WS connected: user 6089e8b9-2bf3-41b4-ab7d-0b91f9a3f86f room e837ce28-4016-4404-ac50-134b86a49c63
+Dec 24, 2025 3:09:15 AM com.ocgp.server.Room startGame
+INFO: Room e837ce28-4016-4404-ac50-134b86a49c63 started game (CHINESE_CHESS)
+Dec 24, 2025 3:14:34 AM com.ocgp.server.DataStore initConnection
+INFO: SQLite DB at D:\.vscode\software\backend\out\data\ocgp.sqlite
+Dec 24, 2025 3:14:34 AM com.ocgp.server.DataStore loadFromDb
+INFO: Loaded from DB: users=0 rooms=0
+Dec 24, 2025 3:14:34 AM com.ocgp.server.WebSocketHub onStart
+INFO: WebSocket server started
+Dec 24, 2025 3:15:07 AM com.ocgp.server.DataStore authenticate
+WARNING: Invalid login attempt for user: ABC
+Dec 24, 2025 3:15:08 AM com.ocgp.server.DataStore authenticate
+WARNING: Invalid login attempt for user: ABC
+Dec 24, 2025 3:15:10 AM com.ocgp.server.DataStore authenticate
+WARNING: Invalid login attempt for user: ABC
+Dec 24, 2025 3:15:16 AM com.ocgp.server.DataStore authenticate
+WARNING: Invalid login attempt for user: ABC
+Dec 24, 2025 3:15:52 AM com.ocgp.server.DataStore register
+INFO: User registered: ABC (e43127f1-2e01-41cd-bd01-2c48ca9af69e)
+Dec 24, 2025 3:16:00 AM com.ocgp.server.Room addPlayer
+INFO: User e43127f1-2e01-41cd-bd01-2c48ca9af69e joined room d5c0d969-8b92-4000-ba3c-4d56e1870c7e
+Dec 24, 2025 3:16:00 AM com.ocgp.server.DataStore createRoom
+INFO: Room created: 有種來啊 (d5c0d969-8b92-4000-ba3c-4d56e1870c7e) by user e43127f1-2e01-41cd-bd01-2c48ca9af69e
+Dec 24, 2025 3:16:00 AM com.ocgp.server.WebSocketHub onOpen
+INFO: WS connected: user e43127f1-2e01-41cd-bd01-2c48ca9af69e room d5c0d969-8b92-4000-ba3c-4d56e1870c7e
+Dec 24, 2025 3:16:31 AM com.ocgp.server.DataStore register
+INFO: User registered: AAA (9f33a4c9-41c1-48ef-a577-e42ffed9c922)
+Dec 24, 2025 3:16:34 AM com.ocgp.server.Room addPlayer
+INFO: User 9f33a4c9-41c1-48ef-a577-e42ffed9c922 joined room d5c0d969-8b92-4000-ba3c-4d56e1870c7e
+Dec 24, 2025 3:16:34 AM com.ocgp.server.WebSocketHub onOpen
+INFO: WS connected: user 9f33a4c9-41c1-48ef-a577-e42ffed9c922 room d5c0d969-8b92-4000-ba3c-4d56e1870c7e
+Dec 24, 2025 3:18:02 AM com.ocgp.server.Room startGame
+INFO: Room d5c0d969-8b92-4000-ba3c-4d56e1870c7e started game (GOBANG)
+Dec 24, 2025 3:19:12 AM com.ocgp.server.Room removePlayer
+INFO: User e43127f1-2e01-41cd-bd01-2c48ca9af69e left room d5c0d969-8b92-4000-ba3c-4d56e1870c7e
+Dec 24, 2025 3:19:23 AM com.ocgp.server.Room removePlayer
+INFO: User 9f33a4c9-41c1-48ef-a577-e42ffed9c922 left room d5c0d969-8b92-4000-ba3c-4d56e1870c7e
+Dec 24, 2025 3:30:04 AM com.ocgp.server.DataStore initConnection
+INFO: SQLite DB at D:\.vscode\software\backend\out\data\ocgp.sqlite
+Dec 24, 2025 3:30:04 AM com.ocgp.server.DataStore loadFromDb
+INFO: Loaded from DB: users=0 rooms=0
+Dec 24, 2025 3:30:04 AM com.ocgp.server.WebSocketHub onStart
+INFO: WebSocket server started
+Dec 24, 2025 3:31:06 AM com.ocgp.server.DataStore register
+INFO: User registered: ABC (c7ea6024-0878-431a-89f7-5d0588bf78c3)
+Dec 24, 2025 3:31:47 AM com.ocgp.server.DataStore register
+INFO: User registered: AAA (3fdd0ff2-af32-4f8f-b860-bf6b92914338)
+Dec 24, 2025 3:31:56 AM com.ocgp.server.Room addPlayer
+INFO: User c7ea6024-0878-431a-89f7-5d0588bf78c3 joined room b4007f91-c546-4a47-a4aa-7550bdce5537
+Dec 24, 2025 3:31:56 AM com.ocgp.server.DataStore createRoom
+INFO: Room created: 有種來啊 (b4007f91-c546-4a47-a4aa-7550bdce5537) by user c7ea6024-0878-431a-89f7-5d0588bf78c3
+Dec 24, 2025 3:31:56 AM com.ocgp.server.WebSocketHub onOpen
+INFO: WS connected: user c7ea6024-0878-431a-89f7-5d0588bf78c3 room b4007f91-c546-4a47-a4aa-7550bdce5537
+Dec 24, 2025 3:32:11 AM com.ocgp.server.Room addPlayer
+INFO: User 3fdd0ff2-af32-4f8f-b860-bf6b92914338 joined room b4007f91-c546-4a47-a4aa-7550bdce5537
+Dec 24, 2025 3:32:11 AM com.ocgp.server.WebSocketHub onOpen
+INFO: WS connected: user 3fdd0ff2-af32-4f8f-b860-bf6b92914338 room b4007f91-c546-4a47-a4aa-7550bdce5537
+Dec 24, 2025 3:32:14 AM com.ocgp.server.Room removePlayer
+INFO: User 3fdd0ff2-af32-4f8f-b860-bf6b92914338 left room b4007f91-c546-4a47-a4aa-7550bdce5537
+Dec 24, 2025 2:46:43 PM com.ocgp.server.DataStore initConnection
+INFO: SQLite DB at D:\.vscode\software\backend\out\data\ocgp.sqlite
+Dec 24, 2025 2:46:43 PM com.ocgp.server.DataStore loadFromDb
+INFO: Loaded from DB: users=0 rooms=0
+Dec 24, 2025 2:46:43 PM com.ocgp.server.WebSocketHub onStart
+INFO: WebSocket server started
+Dec 24, 2025 2:59:58 PM com.ocgp.server.DataStore register
+INFO: User registered: ABC (7576cfa3-a529-4ddd-8647-769f08e9ec3d)
+Dec 24, 2025 3:00:06 PM com.ocgp.server.DataStore authenticate
+WARNING: Invalid login attempt for user: AAA
+Dec 24, 2025 3:00:11 PM com.ocgp.server.DataStore register
+INFO: User registered: AAA (becd07dc-437a-45fb-8b48-b9c62fa0567b)
+Dec 24, 2025 3:00:31 PM com.ocgp.server.Room addPlayer
+INFO: User becd07dc-437a-45fb-8b48-b9c62fa0567b joined room fd0de950-a5a1-4c11-bed9-b0a644e31cf4
+Dec 24, 2025 3:00:31 PM com.ocgp.server.DataStore createRoom
+INFO: Room created: 有種來啊 (fd0de950-a5a1-4c11-bed9-b0a644e31cf4) by user becd07dc-437a-45fb-8b48-b9c62fa0567b
+Dec 24, 2025 3:00:31 PM com.ocgp.server.WebSocketHub onOpen
+INFO: WS connected: user becd07dc-437a-45fb-8b48-b9c62fa0567b room fd0de950-a5a1-4c11-bed9-b0a644e31cf4
+Dec 24, 2025 3:00:35 PM com.ocgp.server.Room addPlayer
+INFO: User 7576cfa3-a529-4ddd-8647-769f08e9ec3d joined room fd0de950-a5a1-4c11-bed9-b0a644e31cf4
+Dec 24, 2025 3:00:35 PM com.ocgp.server.WebSocketHub onOpen
+INFO: WS connected: user 7576cfa3-a529-4ddd-8647-769f08e9ec3d room fd0de950-a5a1-4c11-bed9-b0a644e31cf4
+Dec 24, 2025 3:00:40 PM com.ocgp.server.Room startGame
+INFO: Room fd0de950-a5a1-4c11-bed9-b0a644e31cf4 started game (GOBANG)
+Dec 24, 2025 3:07:50 PM com.ocgp.server.Room removePlayer
+INFO: User 7576cfa3-a529-4ddd-8647-769f08e9ec3d left room fd0de950-a5a1-4c11-bed9-b0a644e31cf4
+Dec 24, 2025 3:15:19 PM com.ocgp.server.DataStore initConnection
+INFO: SQLite DB at D:\.vscode\software\backend\out\data\ocgp.sqlite
+Dec 24, 2025 3:15:19 PM com.ocgp.server.DataStore loadFromDb
+INFO: Loaded from DB: users=0 rooms=0
+Dec 24, 2025 3:15:19 PM com.ocgp.server.WebSocketHub onStart
+INFO: WebSocket server started
+Dec 24, 2025 3:15:49 PM com.ocgp.server.DataStore register
+INFO: User registered: AAA (c48138ae-d14d-41ed-829e-66565aca40b5)
+Dec 24, 2025 3:15:57 PM com.ocgp.server.DataStore register
+INFO: User registered: ABC (151bfa90-b24d-430a-a51a-af95b27c1554)
+Dec 24, 2025 3:16:09 PM com.ocgp.server.Room addPlayer
+INFO: User 151bfa90-b24d-430a-a51a-af95b27c1554 joined room 73dda510-53cb-4659-bd24-7d7866b84db2
+Dec 24, 2025 3:16:09 PM com.ocgp.server.DataStore createRoom
+INFO: Room created: 有種來啊 (73dda510-53cb-4659-bd24-7d7866b84db2) by user 151bfa90-b24d-430a-a51a-af95b27c1554
+Dec 24, 2025 3:16:09 PM com.ocgp.server.WebSocketHub onOpen
+INFO: WS connected: user 151bfa90-b24d-430a-a51a-af95b27c1554 room 73dda510-53cb-4659-bd24-7d7866b84db2
+Dec 24, 2025 3:16:13 PM com.ocgp.server.Room addPlayer
+INFO: User c48138ae-d14d-41ed-829e-66565aca40b5 joined room 73dda510-53cb-4659-bd24-7d7866b84db2
+Dec 24, 2025 3:16:13 PM com.ocgp.server.WebSocketHub onOpen
+INFO: WS connected: user c48138ae-d14d-41ed-829e-66565aca40b5 room 73dda510-53cb-4659-bd24-7d7866b84db2
+Dec 24, 2025 3:16:16 PM com.ocgp.server.Room startGame
+INFO: Room 73dda510-53cb-4659-bd24-7d7866b84db2 started game (GOBANG)
+Dec 24, 2025 3:18:22 PM com.ocgp.server.DataStore initConnection
+INFO: SQLite DB at D:\.vscode\software\backend\out\data\ocgp.sqlite
+Dec 24, 2025 3:18:22 PM com.ocgp.server.DataStore loadFromDb
+INFO: Loaded from DB: users=0 rooms=0
+Dec 24, 2025 3:18:22 PM com.ocgp.server.WebSocketHub onStart
+INFO: WebSocket server started

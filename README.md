@@ -59,11 +59,13 @@ OCGP_STATIC_DIR="$(pwd)/frontend" OCGP_PORT=8080 \
 - `POST /api/register`：註冊帳號。
 - `POST /api/login`：登入並取得 `X-Auth-Token`。
 - `GET /api/games`：遊戲列表。
-- `GET /api/rooms`：房間列表。
+- `GET /api/rooms`：房間列表，只列公開房間。
 - `POST /api/rooms`：建立房間。
 - `POST /api/rooms/{id}/join`：加入房間。
 - `POST /api/rooms/{id}/start`：開始對戰（限房主）。
 - `POST /api/rooms/{id}/move`：提交行棋或落子。
+- `POST /api/rooms/{id}/leave`：離開房間；若房間變空房（0 人）則 排程 30 秒後刪除（期間有人 join 會取消）
+- `POST /api/rooms/{id}/restart`：對戰結束後由房主重置對局（回到等待狀態）。
 
 > 所有需要身分驗證的 API 皆須於請求標頭附上 `X-Auth-Token`。
 

@@ -4,9 +4,20 @@ const state = {
     games: {},
     rooms: [],
     activeRoom: null,
-    poller: null,
+    poller: null,          // 房間內輪詢
+    lobbyPoller: null,     // 大廳輪詢
     selectedCell: null,
-    lastRoomStatus: null 
+    lastRoomStatus: null,
+    lastCurrentPlayerId: null,
+    chatMessages: [],
+    chatSinceId: 0,
+    ws: null,
+    pingTimer: null,
+    lastPingMs: null,
+    turnTimer: null,
+    turnDeadline: null,
+    totalTimer: null,
+    startedAt: null
 };
 
 const dom = {
@@ -32,8 +43,68 @@ const dom = {
     logoutBtn: document.getElementById("logout-btn"),
     toast: document.getElementById("toast"),
     simpleModal: document.getElementById("simple-modal"),
-    winnerText: document.getElementById("winner-text")
+    winnerText: document.getElementById("winner-text"),
+    brandTitle: document.getElementById("brand-title"),
+    filterName: document.getElementById("filter-name"),
+    filterGameType: document.getElementById("filter-game-type"),
+    filterInvite: document.getElementById("filter-invite"),
+    applyFilterBtn: document.getElementById("apply-filter"),
+    pingBtn: document.getElementById("ping-btn"),
+    pingDisplay: document.getElementById("ping-display"),
+    turnTimer: document.getElementById("turn-timer"),
+    totalTimer: document.getElementById("total-timer"),
+    chatMessages: document.getElementById("chat-messages"),
+    chatForm: document.getElementById("chat-form"),
+    chatInput: document.getElementById("chat-input")
 };
+
+// --- Board orientation helpers ---
+const CHINESE_ROWS = 10;
+const CHINESE_COLS = 9;
+
+function isChinesePerspectiveFlipped(room) {
+    if (!room || room.gameType !== "CHINESE_CHESS") return false;
+    if (!state.user?.id) return false;
+
+    // 依 playerIds / playerOrder：0 = 紅方(下方)，1 = 黑方(上方)；黑方需要翻轉讓己方在下
+    const idx = (room.playerIds || []).indexOf(state.user.id);
+    return idx === 1;
+}
+
+function mapChineseDisplayToActual(room, displayRow, displayCol) {
+    if (!isChinesePerspectiveFlipped(room)) {
+        return { row: displayRow, col: displayCol };
+    }
+    return {
+        row: (CHINESE_ROWS - 1) - displayRow,
+        col: (CHINESE_COLS - 1) - displayCol
+    };
+}
+
+// --- Gobang hover preview helpers ---
+function getGobangStoneClassForUser(room) {
+    const order = room?.gameState?.playerOrder || [];
+    const me = state.user?.id;
+    const idx = order.indexOf(me);
+
+    // 後端：playerOrder[0] => stone = 1 (黑)；playerOrder[1] => stone = -1 (白)
+    if (idx === 1) return "white";
+    return "black";
+}
+
+function addGobangHoverPreview(cell, room) {
+    // 已有棋子就不加（包含正式或預覽）
+    if (cell.querySelector(".stone")) return;
+
+    const stone = document.createElement("div");
+    stone.className = `stone ${getGobangStoneClassForUser(room)} preview`;
+    cell.appendChild(stone);
+}
+
+function removeGobangHoverPreview(cell) {
+    const preview = cell.querySelector(".stone.preview");
+    if (preview) preview.remove();
+}
 
 function init() {
     loadStoredSession();
@@ -135,6 +206,66 @@ function bindEvents() {
     dom.logoutBtn.addEventListener("click", () => {
         logout();
     });
+
+    if (dom.chatForm) {
+        dom.chatForm.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const content = dom.chatInput.value.trim();
+            if (!content || !state.activeRoom) return;
+            try {
+                await apiRequest(`/api/rooms/${state.activeRoom.id}/chat`, {
+                    method: "POST",
+                    body: JSON.stringify({ content })
+                });
+                dom.chatInput.value = "";
+            } catch (err) {
+                showToast(err.message || "送出訊息失敗", true);
+            }
+        });
+    }
+
+    if (dom.applyFilterBtn) {
+        dom.applyFilterBtn.addEventListener("click", async () => {
+            await refreshRooms();
+        });
+    }
+
+    if (dom.pingBtn) {
+        dom.pingBtn.addEventListener("click", async () => {
+            const start = performance.now();
+            try {
+                await apiRequest("/api/ping");
+                const latency = Math.round(performance.now() - start);
+                showToast(`延遲：約 ${latency} ms`);
+            } catch (err) {
+                showToast("Ping 失敗", true);
+            }
+        });
+    }
+
+    // 點擊標題回大廳
+    if (dom.brandTitle) {
+        const goHome = () => {
+            const modal = document.getElementById("simple-modal");
+            if (modal && !modal.classList.contains("hidden")) {
+                modal.classList.add("hidden");
+            }
+
+            if (state.token) {
+                leaveRoom();
+            } else {
+                showAuth();
+            }
+        };
+
+        dom.brandTitle.addEventListener("click", goHome);
+        dom.brandTitle.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                goHome();
+            }
+        });
+    }
 }
 
 function establishSession(response) {
@@ -146,16 +277,28 @@ function establishSession(response) {
 }
 
 function logout() {
+    // 登出前若在房內，嘗試通知後端離房
+    requestLeaveActiveRoom();
+
     state.token = null;
     state.user = null;
     localStorage.removeItem("ocgpToken");
     localStorage.removeItem("ocgpUser");
     clearRoomPoller();
+    clearLobbyPoller();
+    clearPingMonitor();
+    clearTurnTimer();
+    clearTotalTimer();
     updateUserInfo();
     showAuth();
 }
 
 function showAuth() {
+    clearRoomPoller();
+    clearLobbyPoller();
+    clearPingMonitor();
+    clearTurnTimer();
+    clearTotalTimer();
     dom.authSection.classList.remove("hidden");
     dom.lobbySection.classList.add("hidden");
     dom.roomSection.classList.add("hidden");
@@ -165,7 +308,28 @@ function enterLobby() {
     dom.authSection.classList.add("hidden");
     dom.roomSection.classList.add("hidden");
     dom.lobbySection.classList.remove("hidden");
+
+    clearRoomPoller();
+    disconnectWebSocket();
+    clearTurnTimer();
+    clearTotalTimer();
+    startPingMonitor();
+    startLobbyPoller(); // ✅ 大廳定時更新
     fetchGamesAndRooms();
+}
+
+function startLobbyPoller() {
+    clearLobbyPoller();
+    state.lobbyPoller = setInterval(async () => {
+        await refreshRooms();
+    }, 2500);
+}
+
+function clearLobbyPoller() {
+    if (state.lobbyPoller) {
+        clearInterval(state.lobbyPoller);
+        state.lobbyPoller = null;
+    }
 }
 
 async function fetchGamesAndRooms() {
@@ -178,21 +342,36 @@ async function fetchGamesAndRooms() {
     }
 
     await refreshRooms();
+    startPingMonitor();
 }
 
 function populateGameSelect() {
     dom.roomGameTypeSelect.innerHTML = "";
+    dom.filterGameType.innerHTML = "<option value=\"\">全部</option>";
     Object.values(state.games).forEach((game) => {
         const option = document.createElement("option");
         option.value = game.code;
         option.textContent = `${game.name}`;
         dom.roomGameTypeSelect.appendChild(option);
+
+        const optFilter = document.createElement("option");
+        optFilter.value = game.code;
+        optFilter.textContent = game.name;
+        dom.filterGameType.appendChild(optFilter);
     });
 }
 
 async function refreshRooms() {
     try {
-        const response = await apiRequest("/api/rooms");
+        const params = [];
+        const name = dom.filterName?.value.trim() || "";
+        const gameType = dom.filterGameType?.value || "";
+        const invite = dom.filterInvite?.value.trim() || "";
+        if (name) params.push(`name=${encodeURIComponent(name)}`);
+        if (gameType) params.push(`gameType=${encodeURIComponent(gameType)}`);
+        if (invite) params.push(`inviteCode=${encodeURIComponent(invite)}`);
+        const qs = params.length ? `?${params.join("&")}` : "";
+        const response = await apiRequest(`/api/rooms${qs}`);
         state.rooms = response.rooms || [];
         renderRoomList();
     } catch (error) {
@@ -238,7 +417,15 @@ function renderRoomList() {
             button.disabled = true;
             button.textContent = "請先登入";
         } else {
-            button.addEventListener("click", () => joinRoom(room.id));
+            button.addEventListener("click", () => {
+                if (room.private) {
+                    const code = prompt("請輸入邀請碼");
+                    if (code === null) return;
+                    joinRoom(room.id, code.trim());
+                } else {
+                    joinRoom(room.id);
+                }
+            });
         }
         actions.appendChild(button);
 
@@ -248,9 +435,9 @@ function renderRoomList() {
     });
 }
 
-async function joinRoom(roomId) {
+async function joinRoom(roomId, inviteCode = "") {
     try {
-        await apiRequest(`/api/rooms/${roomId}/join`, { method: "POST" });
+        await apiRequest(`/api/rooms/${roomId}/join`, { method: "POST", body: JSON.stringify(inviteCode ? { inviteCode } : {}) });
         showToast("已加入房間");
         await enterRoom(roomId);
     } catch (error) {
@@ -262,36 +449,53 @@ async function joinRoom(roomId) {
 async function enterRoom(roomId) {
     try {
         clearRoomPoller();
+        clearLobbyPoller(); // ✅ 進房後停止大廳輪詢
         state.lastRoomStatus = null; 
+        disconnectWebSocket();
         
         const response = await apiRequest(`/api/rooms/${roomId}`);
         state.activeRoom = response.room;
+        state.chatMessages = [];
+        state.chatSinceId = 0;
+        await loadChat(roomId);
+        connectWebSocket(roomId);
+        startTotalTimerFromRoom(state.activeRoom);
         
         dom.lobbySection.classList.add("hidden");
         dom.roomSection.classList.remove("hidden");
         
         renderActiveRoom();
-        
-        state.poller = setInterval(async () => {
-            try {
-                const update = await apiRequest(`/api/rooms/${roomId}`);
-                state.activeRoom = update.room;
-                renderActiveRoom();
-            } catch (error) {
-                console.warn("輪詢失敗", error);
-            }
-        }, 2500);
+        if (!state.ws) {
+            startRoomFallback();
+        }
     } catch (error) {
         showToast(error.message || "無法進入房間", true);
         enterLobby();
     }
 }
 
+function requestLeaveActiveRoom() {
+    if (!state.token || !state.user || !state.activeRoom) {
+        return;
+    }
+    const roomId = state.activeRoom.id;
+    // 不阻塞 UI，盡力通知後端即可
+    void apiRequest(`/api/rooms/${roomId}/leave`, { method: "POST" }).catch(() => {});
+}
+
 function leaveRoom() {
+    // ✅ 離開房間時通知後端：更新人數；若全員離開後端會刪房
+    requestLeaveActiveRoom();
+
     state.activeRoom = null;
+    state.chatMessages = [];
+    state.chatSinceId = 0;
     state.selectedCell = null;
     state.lastRoomStatus = null;
     clearRoomPoller();
+    disconnectWebSocket();
+    clearTurnTimer();
+    clearTotalTimer();
     dom.roomSection.classList.add("hidden");
     enterLobby();
 }
@@ -303,56 +507,113 @@ function clearRoomPoller() {
     }
 }
 
-// 修正後的 renderActiveRoom：優先檢查 gameState 的 status 和 winnerId
+function startRoomFallback() {
+    clearRoomPoller();
+    state.poller = setInterval(async () => {
+        if (!state.activeRoom) return;
+        try {
+            const update = await apiRequest(`/api/rooms/${state.activeRoom.id}`);
+            state.activeRoom = update.room;
+            renderActiveRoom();
+            await loadChat(state.activeRoom.id);
+        } catch (error) {
+            showToast("房間已關閉或不存在，已返回大廳", true);
+            leaveRoom();
+        }
+    }, 2500);
+}
+
+function startPingMonitor() {
+    clearPingMonitor();
+    if (!state.token) return;
+    const pingOnce = async () => {
+        const start = performance.now();
+        try {
+            await apiRequest("/api/ping");
+            state.lastPingMs = Math.round(performance.now() - start);
+            if (dom.pingDisplay) {
+                dom.pingDisplay.textContent = `延遲：約 ${state.lastPingMs} ms`;
+            }
+        } catch (_) {
+            if (dom.pingDisplay) {
+                dom.pingDisplay.textContent = "延遲：--";
+            }
+        }
+    };
+    pingOnce();
+    state.pingTimer = setInterval(pingOnce, 4000);
+}
+
+function clearPingMonitor() {
+    if (state.pingTimer) {
+        clearInterval(state.pingTimer);
+        state.pingTimer = null;
+    }
+}
+
 function renderActiveRoom() {
     const room = state.activeRoom;
     if (!room) {
         return;
     }
-    
-    // 優先讀取 gameState 內的狀態，因為 session 的 toDto 放在這裡
+    startTotalTimerFromRoom(room);
+
     const currentStatus = room.gameState?.status || room.status;
 
-    // 如果狀態變成 FINISHED，且上一次狀態不是 FINISHED (或者是剛進入房間就是 FINISHED)
+    // 結束彈窗只觸發一次
     if (currentStatus === "FINISHED" && state.lastRoomStatus !== "FINISHED") {
         triggerGameOverModal(room);
     }
     state.lastRoomStatus = currentStatus;
 
+    // 輪到你提示：文字 + toast（只在「輪到你」那一刻觸發一次）
+    const currentPlayerId = room.currentPlayerId ?? null;
+    const prevPlayerId = state.lastCurrentPlayerId;
+    const isMyTurnNow = room.started && currentStatus === "IN_PROGRESS" && state.user?.id && currentPlayerId === state.user.id;
+    const wasMyTurnBefore = prevPlayerId === state.user?.id;
+
+    if (isMyTurnNow && !wasMyTurnBefore) {
+        showToast("輪到你了");
+    }
+    const serverDeadline = room.turnDeadline ? Date.parse(room.turnDeadline) : null;
+    updateTurnDeadline(isMyTurnNow, currentPlayerId, prevPlayerId, serverDeadline);
+    state.lastCurrentPlayerId = currentPlayerId;
+
     dom.roomTitle.textContent = `${room.name} ｜ ${room.gameTypeName || room.gameType}`;
-    
-    const statusText = room.started
-        ? (currentStatus === "FINISHED" ? "對戰結束" : "對戰進行中")
-        : "等待開始";
+
+    // 房間狀態文字帶入「輪到你了」
+    let statusText = "等待開始";
+    if (room.started) {
+        if (currentStatus === "FINISHED") {
+            statusText = "對戰結束";
+        } else {
+            statusText = isMyTurnNow ? "對戰進行中（輪到你了）" : "對戰進行中（等待對手）";
+        }
+    }
     dom.roomStatus.textContent = statusText;
-    
+
     renderRoomActions(room);
     renderPlayerList(room);
     renderBoard(room);
     renderMoveHistory(room);
+    renderChat();
 }
 
-// 修正後的觸發邏輯
 function triggerGameOverModal(room) {
-    // 優先讀取 gameState 裡的 winnerId，因為五子棋的邏輯寫在那裡
     const winnerId = room.gameState?.winnerId || room.winnerId;
     const isDraw = room.gameState?.draw || false;
 
     if (isDraw) {
-        showSimpleResult("雙方平手", "DRAW");
+        showSimpleResult("雙方平手", "DRAW", "平手");
         return;
     }
-
     if (!winnerId) return;
 
-    // 1. 找出贏家的名字
     const winnerPlayer = (room.players || []).find(p => p.id === winnerId);
     const winnerName = winnerPlayer ? winnerPlayer.username : "未知玩家";
 
-    // 2. 找出贏家的顏色
     let winnerColorCode = "";
     const playerOrder = room.gameState?.playerOrder || [];
-    
     if (playerOrder.length >= 2) {
         if (room.gameType === "CHINESE_CHESS") {
             if (winnerId === playerOrder[0]) winnerColorCode = "RED";
@@ -363,7 +624,13 @@ function triggerGameOverModal(room) {
         }
     }
 
-    showSimpleResult(winnerName, winnerColorCode);
+    // ✅ 新增：你贏了 / 你輸了
+    let resultText = "";
+    if (state.user?.id) {
+        resultText = (winnerId === state.user.id) ? "你贏了" : "你輸了";
+    }
+
+    showSimpleResult(winnerName, winnerColorCode, resultText);
 }
 
 function renderRoomActions(room) {
@@ -371,10 +638,41 @@ function renderRoomActions(room) {
     if (!state.user) {
         return;
     }
+
     const isHost = room.hostUserId === state.user.id;
     const playerCount = (room.playerIds || []).length;
-    const alreadyStarted = room.started;
-    if (isHost && !alreadyStarted) {
+    const currentStatus = room.gameState?.status || room.status;
+
+    // 結束後：房主可重新開始
+    if (isHost && room.started && currentStatus === "FINISHED") {
+        const restartBtn = document.createElement("button");
+        restartBtn.textContent = "重新開始";
+        restartBtn.addEventListener("click", async () => {
+            try {
+                // 若彈窗還開著，先關掉避免遮擋
+                window.closeModal?.();
+
+                await apiRequest(`/api/rooms/${room.id}/restart`, { method: "POST" });
+                showToast("已重置對局，請再次開始");
+
+                // 清理 UI 狀態
+                state.selectedCell = null;
+                state.lastRoomStatus = null;
+                state.lastCurrentPlayerId = null;
+
+                const update = await apiRequest(`/api/rooms/${room.id}`);
+                state.activeRoom = update.room;
+                renderActiveRoom();
+            } catch (error) {
+                showToast(error.message || "重新開始失敗", true);
+            }
+        });
+        dom.roomActions.appendChild(restartBtn);
+        return;
+    }
+
+    // ✅ 未開始：房主可 start（原本邏輯保留）
+    if (isHost && !room.started) {
         const startBtn = document.createElement("button");
         startBtn.textContent = playerCount >= 2 ? "開始對戰" : "等待其他玩家";
         startBtn.disabled = playerCount < 2;
@@ -448,27 +746,36 @@ function renderGobangBoard(room) {
     const game = room.gameState;
     const grid = document.createElement("div");
     grid.className = "board-grid gobang";
+
     const size = game.boardSize || 15;
     const board = game.board || [];
+
     for (let x = 0; x < size; x++) {
         for (let y = 0; y < size; y++) {
             const cell = document.createElement("div");
             cell.className = "cell";
             cell.dataset.x = x;
             cell.dataset.y = y;
+
             const value = board[x]?.[y] ?? 0;
+
             if (value !== 0) {
                 const stone = document.createElement("div");
-                // 你的後端五子棋是用 1 和 -1 (或其他非0值)，這裡只要不是0都畫棋子
-                // 假設 1 是先手(黑), -1 是後手(白)
                 stone.className = `stone ${value === 1 ? "black" : "white"}`;
                 cell.appendChild(stone);
             } else if (isPlayerTurn(room)) {
+                // hover 半透明預覽
+                cell.addEventListener("mouseenter", () => addGobangHoverPreview(cell, room));
+                cell.addEventListener("mouseleave", () => removeGobangHoverPreview(cell));
+
+                // click 落子
                 cell.addEventListener("click", () => submitGobangMove(room, x, y));
             }
+
             grid.appendChild(cell);
         }
     }
+
     dom.boardContainer.appendChild(grid);
 }
 
@@ -489,32 +796,45 @@ async function submitGobangMove(room, x, y) {
 function renderChineseBoard(room) {
     const game = room.gameState;
     const board = game.board || [];
+
+    const flipped = isChinesePerspectiveFlipped(room);
+
     const grid = document.createElement("div");
     grid.className = "board-grid chinese";
-    for (let row = 0; row < board.length; row++) {
-        for (let col = 0; col < board[row].length; col++) {
+
+    // 用「畫面座標」迴圈，轉成「實際座標」取棋子
+    for (let displayRow = 0; displayRow < CHINESE_ROWS; displayRow++) {
+        for (let displayCol = 0; displayCol < CHINESE_COLS; displayCol++) {
             const cell = document.createElement("div");
             cell.className = "cell";
-            cell.dataset.row = row;
-            cell.dataset.col = col;
-            const piece = board[row][col];
+            cell.dataset.row = displayRow;
+            cell.dataset.col = displayCol;
+
+            const { row: actualRow, col: actualCol } = mapChineseDisplayToActual(room, displayRow, displayCol);
+            const piece = board[actualRow]?.[actualCol] ?? null;
+
             if (piece) {
                 const pieceEl = document.createElement("div");
                 pieceEl.className = `piece ${piece.color.toLowerCase()}`;
                 pieceEl.textContent = translatePiece(piece.type, piece.color);
                 cell.appendChild(pieceEl);
             }
-            if (state.selectedCell && state.selectedCell.row === row && state.selectedCell.col === col) {
+
+            if (state.selectedCell && state.selectedCell.row === displayRow && state.selectedCell.col === displayCol) {
                 cell.classList.add("highlight");
             }
+
             if (isPlayerTurn(room)) {
-                cell.addEventListener("click", () => handleChineseCellClick(room, row, col, piece));
+                cell.addEventListener("click", () => handleChineseCellClick(room, displayRow, displayCol, piece));
             }
+
             grid.appendChild(cell);
         }
     }
+
     dom.boardContainer.appendChild(grid);
 }
+
 
 function translatePiece(type, color) {
     const map = {
@@ -530,30 +850,43 @@ function translatePiece(type, color) {
 }
 
 function handleChineseCellClick(room, row, col, piece) {
-    const game = room.gameState;
     const playerIndex = room.playerIds.indexOf(state.user.id);
     if (playerIndex === -1) {
         return;
     }
     const playerColor = playerIndex === 0 ? "RED" : "BLACK";
+
+    // 第一次點：只能選己方棋子
     if (!state.selectedCell) {
         if (piece && piece.color === playerColor) {
-            state.selectedCell = { row, col };
+            state.selectedCell = { row, col }; // 存「畫面座標」
             renderBoard(room);
         }
         return;
     }
 
+    // 若第二次點到己方棋子 => 變更選取
     if (piece && piece.color === playerColor) {
         state.selectedCell = { row, col };
         renderBoard(room);
         return;
     }
 
-    const { row: fromRow, col: fromCol } = state.selectedCell;
-    submitChineseMove(room, { fromRow, fromCol, toRow: row, toCol: col });
+    // 送出 move：把「畫面座標」轉為「後端座標」
+    const fromDisplay = state.selectedCell;
+    const fromActual = mapChineseDisplayToActual(room, fromDisplay.row, fromDisplay.col);
+    const toActual = mapChineseDisplayToActual(room, row, col);
+
+    submitChineseMove(room, {
+        fromRow: fromActual.row,
+        fromCol: fromActual.col,
+        toRow: toActual.row,
+        toCol: toActual.col
+    });
+
     state.selectedCell = null;
 }
+
 
 async function submitChineseMove(room, move) {
     try {
@@ -608,6 +941,113 @@ function renderMoveHistory(room) {
     });
 }
 
+function renderChat() {
+    if (!dom.chatMessages) return;
+    dom.chatMessages.innerHTML = "";
+    state.chatMessages.forEach(msg => {
+        const div = document.createElement("div");
+        const user = (state.activeRoom?.players || []).find(p => p.id === msg.userId);
+        const name = user ? user.username : msg.userId;
+        div.textContent = `${name}: ${msg.content}`;
+        dom.chatMessages.appendChild(div);
+    });
+    dom.chatMessages.scrollTop = dom.chatMessages.scrollHeight;
+}
+
+function updateTurnDeadline(isMyTurnNow, currentPlayerId, prevPlayerId, serverDeadline) {
+    if (!state.activeRoom || !state.activeRoom.started) {
+        state.turnDeadline = null;
+        clearTurnTimer();
+        setTurnTimerText("--");
+        return;
+    }
+    const status = state.activeRoom.gameState?.status || state.activeRoom.status;
+    if (status !== "IN_PROGRESS") {
+        state.turnDeadline = null;
+        clearTurnTimer();
+        setTurnTimerText("--");
+        return;
+    }
+    // 以後端提供的 deadline 為準，若無則依玩家變更重置
+    if (serverDeadline) {
+        state.turnDeadline = serverDeadline;
+    } else if (prevPlayerId !== currentPlayerId) {
+        state.turnDeadline = Date.now() + 15000; // fallback
+    }
+    startTurnTimer();
+}
+
+function startTurnTimer() {
+    clearTurnTimer();
+    if (!state.turnDeadline) return;
+    const tick = () => {
+        if (!state.turnDeadline) {
+            setTurnTimerText("--");
+            return;
+        }
+        const remaining = Math.max(0, state.turnDeadline - Date.now());
+        const seconds = (remaining / 1000).toFixed(1);
+        setTurnTimerText(`${seconds}s`);
+        if (remaining <= 0) {
+            // 停止顯示，等待後端判負
+            clearTurnTimer();
+        }
+    };
+    tick();
+    state.turnTimer = setInterval(tick, 200);
+}
+
+function clearTurnTimer() {
+    if (state.turnTimer) {
+        clearInterval(state.turnTimer);
+        state.turnTimer = null;
+    }
+}
+
+function setTurnTimerText(text) {
+    if (dom.turnTimer) {
+        dom.turnTimer.textContent = `倒數：${text}`;
+    }
+}
+
+function startTotalTimerFromRoom(room) {
+    const startedAt = room?.gameState?.startedAt || room?.startedAt;
+    if (!startedAt) {
+        setTotalTimerText("--");
+        return;
+    }
+    if (state.startedAt === startedAt && state.totalTimer) {
+        return;
+    }
+    clearTotalTimer();
+    state.startedAt = startedAt;
+    const startMs = Date.parse(startedAt);
+    const tick = () => {
+        const elapsed = Math.max(0, Date.now() - startMs);
+        const seconds = Math.floor(elapsed / 1000);
+        const mins = Math.floor(seconds / 60);
+        const secs = seconds % 60;
+        setTotalTimerText(`${mins}:${secs.toString().padStart(2, "0")}`);
+    };
+    tick();
+    state.totalTimer = setInterval(tick, 1000);
+}
+
+function clearTotalTimer() {
+    if (state.totalTimer) {
+        clearInterval(state.totalTimer);
+        state.totalTimer = null;
+    }
+    state.startedAt = null;
+    setTotalTimerText("--");
+}
+
+function setTotalTimerText(text) {
+    if (dom.totalTimer) {
+        dom.totalTimer.textContent = `總用時：${text}`;
+    }
+}
+
 async function apiRequest(path, options = {}) {
     const headers = options.headers ? { ...options.headers } : {};
     if (options.body && !headers["Content-Type"]) {
@@ -634,6 +1074,65 @@ async function apiRequest(path, options = {}) {
     return parsed;
 }
 
+async function loadChat(roomId) {
+    try {
+        const resp = await apiRequest(`/api/rooms/${roomId}/chat?sinceId=${state.chatSinceId || 0}`);
+        const messages = resp.messages || [];
+        if (messages.length) {
+            state.chatSinceId = messages[messages.length - 1].id;
+            state.chatMessages = [...state.chatMessages, ...messages];
+            renderChat();
+        }
+    } catch (err) {
+        console.warn("loadChat failed", err);
+    }
+}
+
+function connectWebSocket(roomId) {
+    disconnectWebSocket();
+    const scheme = location.protocol === "https:" ? "wss" : "ws";
+    const host = location.hostname;
+    const wsPort = (window.OCGP_WS_PORT || 8091);
+    const url = `${scheme}://${host}:${wsPort}/?roomId=${roomId}&token=${state.token}`;
+    try {
+        const ws = new WebSocket(url);
+        ws.onmessage = (event) => {
+            try {
+                const payload = JSON.parse(event.data);
+                if (payload.type === "roomUpdate" && payload.room) {
+                    state.activeRoom = payload.room;
+                    renderActiveRoom();
+                } else if (payload.type === "chatMessage" && payload.message) {
+                    state.chatMessages.push(payload.message);
+                    state.chatSinceId = payload.message.id || state.chatSinceId;
+                    renderChat();
+                }
+            } catch (err) {
+                console.warn("WS message parse error", err);
+            }
+        };
+        ws.onerror = () => {
+            showToast("WebSocket 連線失敗，改用輪詢", true);
+            startRoomFallback();
+        };
+        ws.onclose = () => {
+            if (state.activeRoom) {
+                startRoomFallback();
+            }
+        };
+        state.ws = ws;
+    } catch (err) {
+        console.warn("WS connect failed", err);
+    }
+}
+
+function disconnectWebSocket() {
+    if (state.ws) {
+        state.ws.close();
+        state.ws = null;
+    }
+}
+
 function showToast(message, isError = false) {
     dom.toast.textContent = message;
     dom.toast.style.background = isError ? "rgba(192, 45, 45, 0.95)" : "rgba(30, 61, 115, 0.95)";
@@ -644,24 +1143,35 @@ function showToast(message, isError = false) {
 }
 
 // --- 結算彈窗函式 ---
-window.showSimpleResult = function(winnerName, colorCode) {
-    const modal = document.getElementById('simple-modal');
-    const textElement = document.getElementById('winner-text');
-    
-    let colorName = "";
-    if (colorCode === 'RED') colorName = "紅方";
-    else if (colorCode === 'BLACK') colorName = "黑方";
-    else if (colorCode === 'WHITE') colorName = "白方";
-    else if (colorCode === 'DRAW') colorName = "平手";
-    
-    if (colorCode === 'DRAW') {
-        textElement.innerText = `雙方平手！`;
-    } else {
-        textElement.innerText = `${winnerName} (${colorName}) 獲勝！`;
+window.showSimpleResult = function (winnerName, colorCode, resultText = "") {
+    const modal = document.getElementById("simple-modal");
+    const winnerEl = document.getElementById("winner-text");
+    const resultEl = document.getElementById("result-text");
+
+    // reset class
+    resultEl.classList.remove("win", "lose", "draw");
+
+    if (colorCode === "DRAW") {
+        resultEl.innerText = resultText || "平手";
+        resultEl.classList.add("draw");
+        winnerEl.innerText = "雙方平手！";
+        modal.classList.remove("hidden");
+        return;
     }
-    
-    modal.classList.remove('hidden');
-}
+
+    // 結果字樣
+    if (resultText === "你贏了") resultEl.classList.add("win");
+    else if (resultText === "你輸了") resultEl.classList.add("lose");
+    resultEl.innerText = resultText;
+
+    let colorName = "";
+    if (colorCode === "RED") colorName = "紅方";
+    else if (colorCode === "BLACK") colorName = "黑方";
+    else if (colorCode === "WHITE") colorName = "白方";
+
+    winnerEl.innerText = `${winnerName} (${colorName}) 獲勝！`;
+    modal.classList.remove("hidden");
+};
 
 window.closeModal = function() {
     document.getElementById('simple-modal').classList.add('hidden');
