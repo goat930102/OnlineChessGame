@@ -7,7 +7,7 @@ COPY backend/src ./src
 
 # 複製 WebSocket library
 COPY backend/lib ./lib
-
+COPY frontend ./frontend
 # 編譯（一定要加 classpath）
 RUN mkdir out && \
     javac -cp "lib/*" -d out $(find src -name "*.java")
