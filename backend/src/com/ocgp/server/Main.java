@@ -8,57 +8,49 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.concurrent.Executors;
-import java.util.logging.FileHandler;
-import java.util.logging.Handler;
-import java.util.logging.Level;
-import java.util.logging.Logger;
-import java.util.logging.SimpleFormatter;
+import java.util.logging.*;
 
 public class Main {
     private static final int DEFAULT_PORT = 8080;
 
     public static void main(String[] args) throws IOException {
         initLogging();
+
         int port = resolvePort();
         DataStore dataStore = new DataStore();
 
-        // 先啟動 HTTP（Render 需要）
-        HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
-        Path staticDir = resolveStaticPath();
-        server.createContext("/api", new ApiHandler(dataStore, null)); // 先給 null
-        server.createContext("/", new StaticFileHandler(staticDir));
-        server.setExecutor(Executors.newCachedThreadPool());
-        server.start();
-
-        // 再啟動 WebSocket（用同一個 port）
+        // WebSocket（跟 HTTP 共用同一個 port）
         WebSocketHub wsHub = new WebSocketHub(port, dataStore);
         dataStore.setWebSocketHub(wsHub);
         wsHub.start();
 
-
-
+        // HTTP Server
+        HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
         Path staticDir = resolveStaticPath();
+
         server.createContext("/api", new ApiHandler(dataStore, wsHub));
         server.createContext("/", new StaticFileHandler(staticDir));
         server.setExecutor(Executors.newCachedThreadPool());
         server.start();
+
         System.out.printf("OCGP server started on port %d%n", port);
         System.out.printf("Serving static assets from %s%n", staticDir);
-        System.out.printf("WebSocket server started on port %d%n", wsPort);
+        System.out.printf("WebSocket server started on port %d%n", port);
+
         addShutdownHook(server, dataStore, wsHub);
     }
 
     private static int resolvePort() {
-    String env = System.getenv("PORT");   
-    if (env == null || env.isBlank()) {
-        return DEFAULT_PORT;              
+        String env = System.getenv("PORT"); // Render 用 PORT
+        if (env == null || env.isBlank()) {
+            return DEFAULT_PORT;
+        }
+        try {
+            return Integer.parseInt(env.trim());
+        } catch (NumberFormatException ex) {
+            return DEFAULT_PORT;
+        }
     }
-    try {
-        return Integer.parseInt(env.trim());
-    } catch (NumberFormatException ex) {
-        return DEFAULT_PORT;
-    }
-}
 
     private static Path resolveStaticPath() {
         String override = System.getenv("OCGP_STATIC_DIR");
@@ -68,14 +60,12 @@ public class Main {
                 return candidate;
             }
         }
-        Path fromBackend = Path.of("frontend").toAbsolutePath().normalize();
-        if (Files.exists(fromBackend)) {
-            return fromBackend;
+
+        Path frontend = Path.of("frontend").toAbsolutePath().normalize();
+        if (Files.exists(frontend)) {
+            return frontend;
         }
-        Path sibling = Path.of("..", "frontend").toAbsolutePath().normalize();
-        if (Files.exists(sibling)) {
-            return sibling;
-        }
+
         return Path.of(".").toAbsolutePath().normalize();
     }
 
@@ -97,7 +87,7 @@ public class Main {
 
     private static void initLogging() {
         try {
-            Path logDir = Path.of("backend", "out", "logs").toAbsolutePath().normalize();
+            Path logDir = Path.of("out", "logs").toAbsolutePath().normalize();
             Files.createDirectories(logDir);
             Path logFile = logDir.resolve("ocgp.log");
 
@@ -105,17 +95,15 @@ public class Main {
             for (Handler handler : root.getHandlers()) {
                 root.removeHandler(handler);
             }
+
             FileHandler fh = new FileHandler(logFile.toString(), true);
             fh.setFormatter(new SimpleFormatter());
             fh.setLevel(Level.INFO);
 
             root.addHandler(fh);
             root.setLevel(Level.INFO);
-            System.out.printf("Logging to %s%n", logFile);
         } catch (IOException e) {
-            System.err.printf("Failed to initialize logging: %s%n", e.getMessage());
+            System.err.println("Failed to initialize logging: " + e.getMessage());
         }
     }
-
-    
 }
